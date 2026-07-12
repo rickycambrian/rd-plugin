@@ -20,6 +20,9 @@ export interface DirectUnitInput {
   summary?: TranscriptSummary;
   transcriptPath?: string;
   legacyStreamMaxSequence: number;
+  /** Highest session_end counts previously sent for this session (monotonic floor). */
+  priorMessageCount?: number;
+  priorToolCallCount?: number;
 }
 
 export interface DirectUnitResult {
@@ -29,6 +32,9 @@ export interface DirectUnitResult {
   tools: number;
   maxSequence: number;
   legacyOk: boolean;
+  /** New session_end count floor to persist (never lower than the prior floor). */
+  sessionMessageCount: number;
+  sessionToolCallCount: number;
 }
 
 /**
@@ -69,6 +75,10 @@ export async function writeDirectUnit(input: DirectUnitInput): Promise<DirectUni
   let tools = 0;
   let maxSequence = input.legacyStreamMaxSequence;
   let legacyOk = false;
+  // Default the persisted floor to the prior floor so a skipped/failed legacy
+  // write never lowers the recorded counts.
+  let sessionMessageCount = input.priorMessageCount ?? 0;
+  let sessionToolCallCount = input.priorToolCallCount ?? 0;
   if (deriveHeaders) {
     try {
       const result = await writeLegacyStream(
@@ -78,17 +88,20 @@ export async function writeDirectUnit(input: DirectUnitInput): Promise<DirectUni
         input.legacyStreamMaxSequence,
         summary,
         transcriptPath,
+        { messageCount: input.priorMessageCount, toolCallCount: input.priorToolCallCount },
       );
       messages = result.messages;
       tools = result.tools;
       maxSequence = result.maxSequence;
+      sessionMessageCount = result.sessionMessageCount;
+      sessionToolCallCount = result.sessionToolCallCount;
       legacyOk = true;
     } catch (err) {
       log('warn', 'legacy stream failed', { sessionId: claudeSessionId, error: (err as Error).message });
     }
   }
 
-  return { ops: operations.length, graphOk, messages, tools, maxSequence, legacyOk };
+  return { ops: operations.length, graphOk, messages, tools, maxSequence, legacyOk, sessionMessageCount, sessionToolCallCount };
 }
 
 export interface GatewayUnitInput {

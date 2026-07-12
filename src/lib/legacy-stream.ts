@@ -15,10 +15,24 @@ export interface LegacyStreamConfig {
   trackGit: boolean;
 }
 
+/** Highest counts previously sent to session_end for this session (the floor). */
+export interface LegacyStreamPriorCounts {
+  messageCount?: number;
+  toolCallCount?: number;
+}
+
 export interface LegacyStreamResult {
   messages: number;
   tools: number;
   maxSequence: number;
+  /**
+   * Highest message_count / tool_call_count now on record at session_end for
+   * this session — the new floor the caller must persist so a later re-flush
+   * can enforce monotonicity. Equals the prior floor when the re-send was
+   * skipped because the recount was lower.
+   */
+  sessionMessageCount: number;
+  sessionToolCallCount: number;
 }
 
 function workspaceName(cwd: string | undefined): string {
@@ -144,6 +158,7 @@ export async function writeLegacyStream(
   startAfterSequence: number,
   summary?: TranscriptSummary,
   transcriptPath?: string,
+  prior?: LegacyStreamPriorCounts,
 ): Promise<LegacyStreamResult> {
   const first = events[0];
   const last = events[events.length - 1];
@@ -240,11 +255,36 @@ export async function writeLegacyStream(
     }
   }
 
+  // Counts are computed from the full authoritative transcript/event log, which
+  // grows monotonically. The KFDB session_end handler OVERWRITES these counters
+  // unconditionally (no set-if-greater), so a re-send whose recount is lower than
+  // what we already sent would destroy the higher value. Guard: never send a
+  // session_end that would lower either counter — skip the re-send entirely if a
+  // recount comes back lower than the previously sent floor. Skipping the whole
+  // POST (rather than omitting the fields) is the safe remedy regardless of how
+  // the handler treats absent counter fields.
+  const recountMessages = Math.max(summary?.messageCount ?? 0, countMessages(events));
+  const recountTools = countToolCalls(events);
+  const priorMessages = prior?.messageCount ?? 0;
+  const priorTools = prior?.toolCallCount ?? 0;
+  const wouldLower = recountMessages < priorMessages || recountTools < priorTools;
+
+  if (wouldLower) {
+    // Preserve the higher counts already on record; leave session_end untouched.
+    return {
+      messages,
+      tools,
+      maxSequence,
+      sessionMessageCount: priorMessages,
+      sessionToolCallCount: priorTools,
+    };
+  }
+
   await post(cfg, 'session-end', {
     session_id: claudeSessionId,
     ended_at: isoTime(last.receivedAt),
-    message_count: Math.max(summary?.messageCount ?? 0, countMessages(events)),
-    tool_call_count: countToolCalls(events),
+    message_count: recountMessages,
+    tool_call_count: recountTools,
     outcome_summary: outcomeSummary(events, summary),
     success: true,
     metadata: {
@@ -255,5 +295,11 @@ export async function writeLegacyStream(
     },
   }, true);
 
-  return { messages, tools, maxSequence };
+  return {
+    messages,
+    tools,
+    maxSequence,
+    sessionMessageCount: recountMessages,
+    sessionToolCallCount: recountTools,
+  };
 }

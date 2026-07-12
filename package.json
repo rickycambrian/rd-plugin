@@ -19,7 +19,7 @@
     "@noble/hashes": "^1.4.0",
     "@types/node": "^20.19.33",
     "esbuild": "^0.23.0",
-    "rickydata": "file:../rickydata_SDK/packages/core",
+    "rickydata": "1.11.0",
     "typescript": "^5.3.0",
     "vitest": "^3.0.0"
   }

@@ -1,7 +1,7 @@
 import { loadConfig, resolveSink, type RdConfig } from './lib/config.js';
 import { setLogLevel, log } from './lib/log.js';
 import { readPending, clearPending } from './lib/pending.js';
-import { readState, writeState, flushedEntry, setFlushedEntry, computeFingerprint } from './lib/state.js';
+import { readState, writeState, flushedEntry, setFlushedEntry, computeFingerprint, type FlushedEntry } from './lib/state.js';
 import type { PendingEvent } from './lib/event.js';
 import { parseTranscriptSummary, findTranscriptForSession, type TranscriptSummary } from './lib/transcript.js';
 import { getDeriveHeaders, addressFromPrivateKey, type DeriveHeaders } from './lib/derive.js';
@@ -50,7 +50,7 @@ async function main(): Promise<void> {
   if (sink === 'gateway') {
     await flushGateway(claudeSessionId, events, summary);
   } else {
-    await flushDirect(config, claudeSessionId, events, summary, transcriptPath, prior.legacyStreamMaxSequence ?? -1, state);
+    await flushDirect(config, claudeSessionId, events, summary, transcriptPath, prior, state);
   }
 
   setFlushedEntry(state, claudeSessionId, { fingerprint });
@@ -94,7 +94,7 @@ async function flushDirect(
   events: PendingEvent[],
   summary: TranscriptSummary | undefined,
   transcriptPath: string | undefined,
-  legacyStreamMaxSequence: number,
+  prior: FlushedEntry,
   state: ReturnType<typeof readState>,
 ): Promise<void> {
   if (!config.private_key) {
@@ -128,7 +128,9 @@ async function flushDirect(
     events,
     summary,
     transcriptPath,
-    legacyStreamMaxSequence,
+    legacyStreamMaxSequence: prior.legacyStreamMaxSequence ?? -1,
+    priorMessageCount: prior.lastMessageCount,
+    priorToolCallCount: prior.lastToolCallCount,
   });
   log('info', 'flush direct complete', {
     sessionId: claudeSessionId,
@@ -139,7 +141,11 @@ async function flushDirect(
     legacyOk: result.legacyOk,
   });
 
-  setFlushedEntry(state, claudeSessionId, { legacyStreamMaxSequence: result.maxSequence });
+  setFlushedEntry(state, claudeSessionId, {
+    legacyStreamMaxSequence: result.maxSequence,
+    lastMessageCount: result.sessionMessageCount,
+    lastToolCallCount: result.sessionToolCallCount,
+  });
 }
 
 main()
