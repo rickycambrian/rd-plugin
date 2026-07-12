@@ -85,7 +85,7 @@ One unified Claude Code plugin (`rd-plugin@rickydata`) that tracks all sessions 
 | C — SDK session-link helpers | `sdk-link` | **DONE** — rickydata_SDK main `177ac9d` + `237aa12` (sessionLinkNodeId, buildSessionLinkOperations, claudeCodeSessionNodeId, pass-through fields; 18 tests) |
 | A — plugin core | `plugin-core` | in progress (D1 validated) |
 | B — gateway sink + remote injection | `gateway` | **DONE (code)** — mcp_deployments_registry branch `feat/rd-plugin-gateway-sink` @ `60515bf58` (tool-overlay extraction, runner injection gated on knowledgeGraphIngestion + `RD_PLUGIN_COMMIT` env, spool ingestor with forced authenticated wallet; 66 focused + 106 benchmark regression tests green). Inert until `RD_PLUGIN_COMMIT` set in container env. Merge + deploy pending gate. |
-| D — home + rickygit linking | `home-bridge` | in progress |
+| D — home + rickygit linking | `home-bridge` | **DONE** — rickydata_home main `752e81c` (bridge emits HarnessSessionKey + SAME_SESSION per chat session, wallet threaded via resolver; 121 sessions tests) + rickydata_git main `3d588db` (relay emits link ops for agent.session with authenticated wallet; 29 tests). Cross-impl pinned vector verified. Production SAME_SESSION in-degree proof deferred to final gate. |
 | E — migration + public onboarding | `docs-onboarding` | **E1 DONE** — rd-plugin `8dce165` (specs 001–007, docs, commands/skills, migrate-settings verified dry-run, e2e scripts, CI). E2 (apply migration) blocked on A. |
 | F — Codex fold-in | (post-gate) | blocked on final gate |
 | G — KFDB backend health | `kfdb-health` | in progress (parallel) |
