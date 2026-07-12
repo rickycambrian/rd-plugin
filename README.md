@@ -1,8 +1,10 @@
 # rd-plugin
 
-**rickydata session tracking for Claude Code.** Captures your coding sessions — prompts, turns, tool calls, files touched, commands run — into your own wallet-scoped knowledge graph on KFDB, with user-controlled encryption (sign-to-derive). Works identically on your local machine and on the rickydata remote TEE stack.
+**Your Claude Code sessions, in your own knowledge graph.**
 
-> Status: under active development. Install instructions will be finalized with v0.1.0.
+rd-plugin is a Claude Code plugin from [rickydata](https://rickydata.org) that captures your coding sessions — prompts, turns, tool calls, files touched, commands run — into a wallet-scoped knowledge graph on KFDB, encrypted with a key only your wallet can derive. It behaves identically whether you run Claude Code on your own machine or on the rickydata remote TEE stack.
+
+Nothing is captured until you connect a wallet. Turn it off any time.
 
 ## Install
 
@@ -11,15 +13,57 @@ claude plugin marketplace add rickycambrian/rd-plugin
 claude plugin install rd-plugin@rickydata
 ```
 
-Then run `/rd-setup` inside Claude Code to connect your wallet. Without a wallet configured, the plugin loads but all hooks no-op — nothing is captured, nothing is sent.
+Then, inside Claude Code:
 
-## Principles
+```
+/rd-setup
+```
 
-- **Fail-open, always.** A tracking hook must never break or slow a coding session.
-- **Wallet-scoped.** Your data is written under your wallet with user-controlled encryption; nobody else can read it.
-- **One graph everywhere.** The same schema-v3 trace graph whether you run locally (direct sink) or on rickydata.org TEE infrastructure (gateway sink — your keys never enter the sandbox).
-- **Toggleable.** `enabled: false` locally, or one API call remotely, turns it off completely.
+Without a wallet configured, the plugin loads but every hook is a no-op — nothing is captured, nothing is sent. Setup is the moment you opt in.
+
+## What you get
+
+Once connected, ask Claude about your own history:
+
+- `/rd-sessions` — recent sessions, with tool-call and file counts.
+- `/rd-search <query>` — semantic search across your sessions, code, and commits.
+- `/rd-status` — connection, encryption mode, and tracking status at a glance.
+
+Everything is scoped to your wallet. Your graph is yours.
+
+## How it works
+
+rd-plugin captures in two stages so it never slows you down:
+
+1. A fast appender runs on each hook event and just buffers the event.
+2. A detached flusher runs at the end of a turn/session, builds a schema-v3 trace, and writes it to the configured **sink**.
+
+### Sink modes
+
+| Sink | When | Where keys live |
+|---|---|---|
+| `direct` | Local machine, wallet configured | On your machine; writes go straight to KFDB with your derived key |
+| `gateway` | rickydata remote TEE stack | Never in the sandbox — the plugin only writes spool files; a trusted gateway ingestor performs the wallet-scoped write server-side |
+| `off` | No wallet, or explicitly disabled | Nowhere — hooks no-op |
+
+Resolution order: env `RICKYDATA_KG_SINK` > config `sink` > auto (`direct` when a wallet key is present, otherwise `off`).
+
+The same schema-v3 graph is produced either way, so a session captured locally and one captured remotely are indistinguishable in your graph.
+
+## Privacy model
+
+- **Wallet-scoped.** Every write is encrypted under a key derived from a signature by your wallet (sign-to-derive). The server stores ciphertext it cannot read; nobody but your wallet can decrypt it.
+- **Keys never enter the remote sandbox.** In `gateway` mode the plugin writes only spool files; the derive key lives server-side in the TEE, released to a trusted ingestor — not to the agent sandbox.
+- **Fail-open, always.** A tracking hook must never break or slow a session. Every entrypoint catches its own errors and exits cleanly.
+
+See [docs/PRIVACY.md](docs/PRIVACY.md) for the full model, and [docs/SETUP.md](docs/SETUP.md) for step-by-step configuration.
+
+## Turning it on and off
+
+**Locally** — set `"enabled": false` in `~/.rickydata/config.json`, or `"sink": "off"`, or export `RICKYDATA_KG_SINK=off`. Any of these fully disables capture.
+
+**Remotely** — capture is gated on a per-wallet setting. Disable it with one API call to the gateway; the next run captures nothing. See [docs/PRIVACY.md](docs/PRIVACY.md#disabling).
 
 ## License
 
-[AGPL-3.0](LICENSE)
+[AGPL-3.0](LICENSE). rd-plugin is developed and operated by rickydata against the KFDB backend service.

@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npx vitest run
+
+      - name: Verify dist is reproducible from src
+        run: node scripts/verify-dist.mjs
+
+      - name: Brand gate (no Cambrian/knowledgeflow branding in shipped surface)
+        run: |
+          # SPEC-000 Invariant 5: no cambriannetwork branding. The rickycambrian
+          # GitHub org handle in install instructions is allowed (it is an org
+          # name, not Cambrian branding). The migration script and specs
+          # legitimately name the legacy artifacts they remove/describe, so the
+          # gate is scoped to the shippable plugin surface.
+          matches=$(git grep -in -e cambrian -e knowledgeflow -- \
+            README.md 'docs/**' 'commands/**' 'skills/**' '.mcp.json' 'hooks/**' 'src/**' 'dist/**' \
+            2>/dev/null | grep -vi rickycambrian || true)
+          if [ -n "$matches" ]; then
+            echo "::error::Cambrian/knowledgeflow branding found in shipped plugin surface:"
+            echo "$matches"
+            exit 1
+          fi
+          echo "brand gate clean"

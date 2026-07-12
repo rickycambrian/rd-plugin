@@ -13,7 +13,7 @@ One unified Claude Code plugin (`rd-plugin@rickydata`) that tracks all sessions 
 2. **Wallet-scoped writes only.** All KFDB graph writes carry S2D headers for the owning wallet; no plaintext private data.
 3. **One commit = one behavior.** `dist/` is checked in and byte-reproducible from `src/` (CI `verify-dist`); a pinned commit hash fully determines executable bytes (TEE content-addressing).
 4. **Legacy stream + schema-v3 graph both written** until a future deprecation spec says otherwise.
-5. **No cambriannetwork.** KFDB = rickydata stack. CI gate: `git grep -il cambrian` must be empty.
+5. **No cambriannetwork.** KFDB = rickydata stack. CI gate: no `cambrian`/`knowledgeflow` branding in the shippable surface (README, docs/, commands/, skills/, .mcp.json, hooks/, src/, dist/), allowlisting the `rickycambrian` GitHub org handle. Specs and `scripts/migrate-settings.mjs` (which must name the legacy `cambriannetwork` keys to remove them) are out of gate scope. (Refined 2026-07-12 — the literal whole-repo grep was unsatisfiable: the org handle itself contains the substring.)
 
 ## Decision log
 
