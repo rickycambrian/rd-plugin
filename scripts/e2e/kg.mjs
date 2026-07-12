@@ -180,11 +180,12 @@ export async function findBySession(client, label, claudeSessionId, maxRows = 10
  *
  * Source families checked: ClaudeCodeSession (deterministic id), plus any
  * `extraFamilies` (default RickydataChatSession [home], RickydataAgentSession
- * [git]) discovered by private listEntities + claude_session_id filter.
+ * [git], AgentChatSession [agent-gateway chat traces]) discovered by private
+ * listEntities + claude_session_id/session_id filter.
  */
 export async function sameSessionInDegree(client, walletAddress, claudeSessionId, opts = {}) {
   const maxRows = opts.limit || 10_000;
-  const extraFamilies = opts.extraFamilies || ['RickydataChatSession', 'RickydataAgentSession'];
+  const extraFamilies = opts.extraFamilies || ['RickydataChatSession', 'RickydataAgentSession', 'AgentChatSession'];
 
   const harnessId = harnessKeyNodeId(walletAddress, claudeSessionId);
   const ccId = claudeSessionNodeId(walletAddress, claudeSessionId, opts.agentId);
