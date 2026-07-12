@@ -3964,7 +3964,22 @@ function selectBackfillCandidates(files, opts) {
   return files.filter((s) => opts.since === void 0 ? true : s.mtimeMs >= opts.since).filter((s) => !opts.done[s.id]).sort((a, b) => a.mtimeMs - b.mtimeMs).slice(0, Math.max(0, opts.limit));
 }
 
+// src/lib/cli-help.ts
+function wantsHelp(args) {
+  return args.includes("--help") || args.includes("-h");
+}
+
 // src/backfill.ts
+var USAGE = `usage: node backfill.mjs [--since <ISO-date>] [--limit <n>] [--sleep <ms>]
+
+Replay historical Claude Code transcripts through the flush write path so past
+sessions land in the graph. Resumable via a per-session watermark in state.json.
+
+  --since <ISO-date>  only replay sessions modified on/after this date
+  --limit <n>         max sessions to replay (default 100)
+  --sleep <ms>        delay between sessions (default 1000)
+  -h, --help          show this help and exit
+`;
 function parseArgs(args) {
   const get = (flag) => {
     const i = args.indexOf(flag);
@@ -4012,6 +4027,10 @@ function sleep(ms) {
 }
 async function main() {
   const args = process.argv.slice(2);
+  if (wantsHelp(args)) {
+    process.stdout.write(USAGE);
+    return;
+  }
   const { since, limit, sleepMs } = parseArgs(args);
   const config = loadConfig();
   setLogLevel(config.log_level);

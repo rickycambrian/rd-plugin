@@ -8,6 +8,18 @@ import { parseTranscriptSummary, transcriptToEvents } from './lib/transcript.js'
 import { getDeriveHeaders, addressFromPrivateKey, type DeriveHeaders } from './lib/derive.js';
 import { writeDirectUnit, writeGatewayUnit } from './lib/writer.js';
 import { selectBackfillCandidates, type DiscoveredSession } from './lib/backfill-core.js';
+import { wantsHelp } from './lib/cli-help.js';
+
+const USAGE = `usage: node backfill.mjs [--since <ISO-date>] [--limit <n>] [--sleep <ms>]
+
+Replay historical Claude Code transcripts through the flush write path so past
+sessions land in the graph. Resumable via a per-session watermark in state.json.
+
+  --since <ISO-date>  only replay sessions modified on/after this date
+  --limit <n>         max sessions to replay (default 100)
+  --sleep <ms>        delay between sessions (default 1000)
+  -h, --help          show this help and exit
+`;
 
 /**
  * backfill — replay historical Claude Code transcripts (~/.claude/projects/​**​/*.jsonl)
@@ -70,6 +82,10 @@ function sleep(ms: number): Promise<void> {
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+  if (wantsHelp(args)) {
+    process.stdout.write(USAGE);
+    return;
+  }
   const { since, limit, sleepMs } = parseArgs(args);
 
   const config = loadConfig();

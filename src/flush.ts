@@ -7,6 +7,17 @@ import { parseTranscriptSummary, findTranscriptForSession, type TranscriptSummar
 import { getDeriveHeaders, addressFromPrivateKey, type DeriveHeaders } from './lib/derive.js';
 import { drainQueue } from './lib/queue.js';
 import { writeDirectUnit, writeGatewayUnit } from './lib/writer.js';
+import { wantsHelp } from './lib/cli-help.js';
+
+const USAGE = `usage: node flush.mjs <sessionId> [--final]
+
+Detached worker: flush a session's pending events to the resolved sink. Normally
+spawned by capture on Stop/SessionEnd, not run by hand.
+
+  <sessionId>   the session to flush
+  --final       clear the pending log after flushing
+  -h, --help    show this help and exit
+`;
 
 /**
  * flush — the detached worker spawned by capture on Stop/SessionEnd. Reads the
@@ -17,6 +28,10 @@ import { writeDirectUnit, writeGatewayUnit } from './lib/writer.js';
  */
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+  if (wantsHelp(args)) {
+    process.stdout.write(USAGE);
+    return;
+  }
   const sessionId = args.find((a) => !a.startsWith('--')) ?? 'unknown';
   const final = args.includes('--final');
 

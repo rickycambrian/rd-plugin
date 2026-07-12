@@ -173,9 +173,27 @@ function log(level, message, fields = {}) {
   }
 }
 
+// src/lib/cli-help.ts
+function wantsHelp(args) {
+  return args.includes("--help") || args.includes("-h");
+}
+
 // src/capture.ts
+var USAGE = `usage: node capture.mjs [--spawn-flush] [--final]
+
+Fast per-event hook: append one pending event from the hook JSON on stdin.
+Normally invoked by the harness, not run by hand.
+
+  --spawn-flush   spawn a detached flush after appending
+  --final         mark the spawned flush as the session's final (SessionEnd)
+  -h, --help      show this help and exit
+`;
 async function main() {
   const args = process.argv.slice(2);
+  if (wantsHelp(args)) {
+    process.stdout.write(USAGE);
+    return;
+  }
   const spawnFlush = args.includes("--spawn-flush");
   const final = args.includes("--final");
   const input = await readHookInput();

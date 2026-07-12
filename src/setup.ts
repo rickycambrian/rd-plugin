@@ -3,6 +3,18 @@ import { CONFIG_FILE, STATE_DIR, PENDING_DIR, QUEUE_DIR, DATA_DIR } from './lib/
 import { readJsonFile, writeJsonFileAtomic } from './lib/fsutil.js';
 import { setLogLevel, log } from './lib/log.js';
 import { parseSetupArgs, applySetup, maskConfig, type ConfigRecord } from './lib/setup-core.js';
+import { wantsHelp } from './lib/cli-help.js';
+
+const USAGE = `usage: node setup.mjs [--status] [key=value ...] [--force]
+
+Validate and merge rd-plugin config at ~/.rickydata/config.json. With no
+key=value pairs it prints the current (masked) config and directory status.
+
+  --status      print config + directory status only
+  key=value     set a config key (existing keys need --force to overwrite)
+  --force       allow overwriting existing keys
+  -h, --help    show this help and exit
+`;
 
 /**
  * setup — backend for /rd-setup. Validates + merges config, creating the
@@ -13,6 +25,10 @@ import { parseSetupArgs, applySetup, maskConfig, type ConfigRecord } from './lib
  */
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+  if (wantsHelp(args)) {
+    process.stdout.write(USAGE);
+    return;
+  }
   const statusOnly = args.includes('--status') || args.filter((a) => a.includes('=')).length === 0;
 
   const existing = readJsonFile<ConfigRecord>(CONFIG_FILE, {});

@@ -2,6 +2,16 @@ import { loadConfig, resolveSink } from './lib/config.js';
 import { setLogLevel, log } from './lib/log.js';
 import { getDeriveHeaders, type DeriveHeaders } from './lib/derive.js';
 import { drainQueue, queueSize } from './lib/queue.js';
+import { wantsHelp } from './lib/cli-help.js';
+
+const USAGE = `usage: node drain-queue.mjs [--batch=<n>] [--auto]
+
+Replay the offline retry queue (re-derives S2D auth at send time).
+
+  --batch=<n>   max queued entries to send this run (default 500)
+  --auto        suppress the JSON result line (cron/opportunistic use)
+  -h, --help    show this help and exit
+`;
 
 /**
  * drain-queue — replay the offline retry queue. Invoked standalone (`/rd-status`
@@ -10,6 +20,10 @@ import { drainQueue, queueSize } from './lib/queue.js';
  */
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+  if (wantsHelp(args)) {
+    process.stdout.write(USAGE);
+    return;
+  }
   const batchArg = args.find((a) => a.startsWith('--batch='));
   const limit = batchArg ? Math.max(1, parseInt(batchArg.split('=')[1], 10) || 500) : 500;
 

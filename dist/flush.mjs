@@ -4041,9 +4041,27 @@ function writeGatewayUnit(input) {
   return writeSpool(input.spoolDir, traces);
 }
 
+// src/lib/cli-help.ts
+function wantsHelp(args) {
+  return args.includes("--help") || args.includes("-h");
+}
+
 // src/flush.ts
+var USAGE = `usage: node flush.mjs <sessionId> [--final]
+
+Detached worker: flush a session's pending events to the resolved sink. Normally
+spawned by capture on Stop/SessionEnd, not run by hand.
+
+  <sessionId>   the session to flush
+  --final       clear the pending log after flushing
+  -h, --help    show this help and exit
+`;
 async function main() {
   const args = process.argv.slice(2);
+  if (wantsHelp(args)) {
+    process.stdout.write(USAGE);
+    return;
+  }
   const sessionId = args.find((a) => !a.startsWith("--")) ?? "unknown";
   const final = args.includes("--final");
   const config = loadConfig();

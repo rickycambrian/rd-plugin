@@ -114,9 +114,28 @@ function maskConfig(config) {
   return out;
 }
 
+// src/lib/cli-help.ts
+function wantsHelp(args) {
+  return args.includes("--help") || args.includes("-h");
+}
+
 // src/setup.ts
+var USAGE = `usage: node setup.mjs [--status] [key=value ...] [--force]
+
+Validate and merge rd-plugin config at ~/.rickydata/config.json. With no
+key=value pairs it prints the current (masked) config and directory status.
+
+  --status      print config + directory status only
+  key=value     set a config key (existing keys need --force to overwrite)
+  --force       allow overwriting existing keys
+  -h, --help    show this help and exit
+`;
 async function main() {
   const args = process.argv.slice(2);
+  if (wantsHelp(args)) {
+    process.stdout.write(USAGE);
+    return;
+  }
   const statusOnly = args.includes("--status") || args.filter((a) => a.includes("=")).length === 0;
   const existing = readJsonFile(CONFIG_FILE, {});
   setLogLevel(typeof existing.log_level === "string" ? existing.log_level : "info");

@@ -6,6 +6,17 @@ import { toPendingEvent } from './lib/event.js';
 import { appendPending, pendingCount } from './lib/pending.js';
 import { loadConfig, resolveSink, shouldTrack } from './lib/config.js';
 import { setLogLevel, log } from './lib/log.js';
+import { wantsHelp } from './lib/cli-help.js';
+
+const USAGE = `usage: node capture.mjs [--spawn-flush] [--final]
+
+Fast per-event hook: append one pending event from the hook JSON on stdin.
+Normally invoked by the harness, not run by hand.
+
+  --spawn-flush   spawn a detached flush after appending
+  --final         mark the spawned flush as the session's final (SessionEnd)
+  -h, --help      show this help and exit
+`;
 
 /**
  * capture — the fast per-event hook. Appends exactly one JSON line to the
@@ -15,6 +26,10 @@ import { setLogLevel, log } from './lib/log.js';
  */
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+  if (wantsHelp(args)) {
+    process.stdout.write(USAGE);
+    return;
+  }
   const spawnFlush = args.includes('--spawn-flush');
   const final = args.includes('--final');
 

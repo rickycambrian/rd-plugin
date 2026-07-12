@@ -3170,9 +3170,26 @@ function queueSize() {
   }
 }
 
+// src/lib/cli-help.ts
+function wantsHelp(args) {
+  return args.includes("--help") || args.includes("-h");
+}
+
 // src/drain-queue.ts
+var USAGE = `usage: node drain-queue.mjs [--batch=<n>] [--auto]
+
+Replay the offline retry queue (re-derives S2D auth at send time).
+
+  --batch=<n>   max queued entries to send this run (default 500)
+  --auto        suppress the JSON result line (cron/opportunistic use)
+  -h, --help    show this help and exit
+`;
 async function main() {
   const args = process.argv.slice(2);
+  if (wantsHelp(args)) {
+    process.stdout.write(USAGE);
+    return;
+  }
   const batchArg = args.find((a) => a.startsWith("--batch="));
   const limit = batchArg ? Math.max(1, parseInt(batchArg.split("=")[1], 10) || 500) : 500;
   const config = loadConfig();
