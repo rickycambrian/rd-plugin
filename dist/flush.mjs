@@ -3717,17 +3717,23 @@ function batchOperations(operations) {
 
 // src/lib/spool.ts
 import path6 from "node:path";
-function spoolFileName(claudeSessionId, seq) {
+function spoolFileName(claudeSessionId, seq, batchIndex = 0) {
   const safe = String(claudeSessionId || "unknown").replace(/[^A-Za-z0-9_.-]/g, "_");
-  return `trace-${safe}-${seq}.json`;
+  const suffix = batchIndex > 0 ? `-b${batchIndex}` : "";
+  return `trace-${safe}-${seq}${suffix}.json`;
 }
 function writeSpool(spoolDir, traces) {
   const written = [];
   for (const trace of traces) {
-    const body = { ...trace, spoolVersion: 1 };
-    const filePath = path6.join(spoolDir, spoolFileName(trace.claudeSessionId, trace.turnIndex));
-    writeFileAtomic(filePath, JSON.stringify(body));
-    written.push(filePath);
+    const graphOperations = buildGraphOperations(trace.walletAddress, [trace]);
+    const batches = batchOperations(graphOperations);
+    if (batches.length === 0) batches.push([]);
+    batches.forEach((batch, batchIndex) => {
+      const body = { ...trace, spoolVersion: 2, graphOperations: batch };
+      const filePath = path6.join(spoolDir, spoolFileName(trace.claudeSessionId, trace.turnIndex, batchIndex));
+      writeFileAtomic(filePath, JSON.stringify(body));
+      written.push(filePath);
+    });
   }
   return written;
 }
