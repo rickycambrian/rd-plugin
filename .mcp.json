@@ -2,7 +2,7 @@
   "mcpServers": {
     "kfdb": {
       "type": "http",
-      "url": "${RICKYDATA_MCP_URL:-http://34.60.37.158/mcp}",
+      "url": "${RICKYDATA_MCP_URL:-https://mcp.rickydata.org/mcp}",
       "headers": {
         "Authorization": "Bearer ${RICKYDATA_API_KEY}"
       }

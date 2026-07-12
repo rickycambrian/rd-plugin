@@ -72,6 +72,7 @@ One unified Claude Code plugin (`rd-plugin@rickydata`) that tracks all sessions 
 - Ops built by `rickydata` SDK `buildClaudeCodeHookTraceOperations` (`TRACE_SCHEMA_VERSION=3`, deterministic UUIDv5 ids) + `buildSessionLinkOperations` (D6).
 - **Gotcha**: shared code nodes (`CodeFile`/`CodeCommand`/`CodeWorkspace`) OMIT `source` entirely (never explicit null).
 - Legacy stream: also write existing `/api/v1/plugin/*` endpoints (session/messages/tool-calls/file-edits/git) with unchanged semantics.
+- **Counter-regression rule** (verified 2026-07-12): the KFDB `session_end` handler overwrites `message_count`/`tool_call_count` UNCONDITIONALLY (session/plugin.rs:1017, no set-if-greater guard). rd-plugin flush must therefore never send a session_end whose counts are lower than what it previously sent for that session — compute counts from the full authoritative transcript (monotonic by construction) and skip the counter fields (or the whole session_end re-send) if a recount is ever lower than the fingerprinted previous send.
 
 ### SDK exports (WS-C, `rickydata` npm)
 - `sessionLinkNodeId({ walletAddress, claudeSessionId })` — deterministic UUIDv5 for `HarnessSessionKey`.
