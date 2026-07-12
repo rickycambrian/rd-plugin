@@ -21,7 +21,13 @@ Report the current state of rd-plugin as a compact dashboard. Read `~/.rickydata
 
 5. **Queue** — count files in `~/.rickydata/queue/rd-plugin/` (offline retry backlog).
 
-6. **Recent activity** — optionally, count this wallet's sessions captured today/this week via a KQL read (see the rd-query skill).
+6. **Codex** — read `~/.codex/config.toml` (if present) and report:
+   - **Wired** — whether any hook `command = "..."` line references `dist/codex-capture.mjs`. Report wired/not-wired (and, if partially wired, which of the 5 events — `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `Stop` — are missing).
+   - **`codex_repo_owners`** — the effective allowlist from `~/.rickydata/config.json`: report the configured list, or "all owners (unset)" when the key is absent or `["*"]`.
+   - **Pending events** — count files in `~/.rickydata/state/rd-plugin/codex-pending/` (Codex sessions with buffered events awaiting flush).
+   - If `~/.codex/config.toml` is absent or not wired, the next action is: `node ${CLAUDE_PLUGIN_ROOT}/dist/setup-codex.mjs` (dry run first, then `--apply`).
+
+7. **Recent activity** — optionally, count this wallet's sessions captured today/this week via a KQL read (see the rd-query skill).
 
 **Output** as a clear dashboard with a status marker per row. Lead with the sink line. Example shape:
 
@@ -45,8 +51,13 @@ Tracking
 Queue
   Pending: 0
 
+Codex
+  Wired:  yes (5/5 events)
+  Owners: all owners (unset)
+  Pending events: 0
+
 Config: ~/.rickydata/config.json
 Logs:   ~/.rickydata/logs/rd-plugin.log
 ```
 
-If anything is wrong, list a specific next action (usually: re-run `/rd-setup`, or check the sink resolution).
+If anything is wrong, list a specific next action (usually: re-run `/rd-setup`, check the sink resolution, or `node ${CLAUDE_PLUGIN_ROOT}/dist/setup-codex.mjs` for unwired Codex).

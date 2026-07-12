@@ -96,3 +96,27 @@ export function maskConfig(config: ConfigRecord): ConfigRecord {
   }
   return out;
 }
+
+export type WalletVerification = { ok: true; address: string } | { ok: false; error: string };
+
+/**
+ * Given the post-merge config and the outcome of a sign-to-derive round-trip
+ * (performed by the caller — this stays pure/sync, no network here), decide
+ * the config to persist plus a one-line status message (SPEC-004 §2 contract):
+ * on success the config is unchanged; on failure the just-persisted
+ * `private_key` is stripped so a bad key is never left in place.
+ */
+export function applyWalletVerification(
+  config: ConfigRecord,
+  verification: WalletVerification,
+): { config: ConfigRecord; message: string } {
+  if (verification.ok) {
+    return { config, message: `wallet enrollment verified: address ${verification.address}` };
+  }
+  const next = { ...config };
+  delete next.private_key;
+  return {
+    config: next,
+    message: `wallet enrollment FAILED, private_key removed: ${verification.error}`,
+  };
+}

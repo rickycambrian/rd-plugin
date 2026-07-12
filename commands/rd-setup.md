@@ -11,11 +11,15 @@ Configure rd-plugin. This runs the setup entrypoint and, if needed, walks you th
 node "${CLAUDE_PLUGIN_ROOT}/dist/setup.mjs"
 ```
 
+Plain `node setup.mjs` with no `key=value` arguments is **status-only** — it never writes anything, it just prints the current (masked) config and directory status.
+
 Pass the API key through if one was provided as an argument (@1):
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/setup.mjs" --api-key "@1"
+node "${CLAUDE_PLUGIN_ROOT}/dist/setup.mjs" api_key=@1
 ```
+
+This is the **arg form**: any `key=value` pair on the command line persists that key to `~/.rickydata/config.json` (existing keys need `--force` to overwrite). When the arg form persists a new `private_key`, `setup.mjs` now performs the sign-to-derive verification round-trip itself (see step 4 below) and reports success or failure in its own output — you do not need to also run the manual curl-based check for that case, though the walkthrough below still documents it since the interactive flow may enroll a key that was typed at a prompt rather than passed as `private_key=...` on the command line.
 
 The entrypoint writes `~/.rickydata/config.json`, creating `~/.rickydata/` if absent, and sets the file to `0600`. It never renames existing keys in that file — rd-plugin shares it with other rickydata tools.
 
@@ -36,6 +40,14 @@ The entrypoint writes `~/.rickydata/config.json`, creating `~/.rickydata/` if ab
    - If either call is non-200: remove `private_key` from the config and report the specific error. Do not leave a bad key in place — hooks would silently fall back to API-key-only and the user would be confused.
 
 5. **Success output** — show the API URL, the masked API key, and (if enrolled) the derived wallet address and session expiry. Point the user at `/rd-status` to verify.
+
+6. **Optional: Codex wiring** — if the user also uses Codex, offer to wire it:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/dist/setup-codex.mjs"
+```
+
+This is a dry run by default and only prints what would change. If the user wants to proceed, re-run with `--apply`. Explain the trust caveat the command prints: Codex prompts once, interactively, to trust the newly wired hook command; `codex exec` (non-interactive) needs `--dangerously-bypass-hook-trust` to run an untrusted hook. This step is optional and independent of the rest of setup — decline it and Claude Code capture still works normally.
 
 **Rules:**
 

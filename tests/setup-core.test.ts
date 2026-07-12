@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseSetupArgs, applySetup, maskConfig } from '../src/lib/setup-core.js';
+import { parseSetupArgs, applySetup, applyWalletVerification, maskConfig } from '../src/lib/setup-core.js';
 
 describe('parseSetupArgs', () => {
   it('parses typed key=value pairs and the --force flag', () => {
@@ -63,5 +63,31 @@ describe('maskConfig', () => {
     expect(masked.api_key).toBe('***');
     expect(masked.private_key).toBe('***');
     expect(masked.api_url).toBe('http://x');
+  });
+});
+
+describe('applyWalletVerification', () => {
+  it('leaves the config untouched on a successful verification', () => {
+    const config = { private_key: '0xabc', api_url: 'http://x' };
+    const result = applyWalletVerification(config, { ok: true, address: '0xWallet' });
+    expect(result.config).toEqual(config);
+    expect(result.message).toContain('verified');
+    expect(result.message).toContain('0xWallet');
+  });
+
+  it('removes private_key and preserves everything else on a failed verification', () => {
+    const config = { private_key: '0xabc', api_url: 'http://x', api_key: 'k' };
+    const result = applyWalletVerification(config, { ok: false, error: 'derive-challenge failed: 500' });
+    expect(result.config.private_key).toBeUndefined();
+    expect(result.config.api_url).toBe('http://x');
+    expect(result.config.api_key).toBe('k');
+    expect(result.message).toContain('FAILED');
+    expect(result.message).toContain('derive-challenge failed: 500');
+  });
+
+  it('does not mutate the input config object on failure', () => {
+    const config = { private_key: '0xabc' };
+    applyWalletVerification(config, { ok: false, error: 'x' });
+    expect(config.private_key).toBe('0xabc');
   });
 });

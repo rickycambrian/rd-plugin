@@ -58,6 +58,16 @@ The same schema-v3 graph is produced either way, so a session captured locally a
 
 See [docs/PRIVACY.md](docs/PRIVACY.md) for the full model, and [docs/SETUP.md](docs/SETUP.md) for step-by-step configuration.
 
+## Codex sessions
+
+rd-plugin captures [Codex](https://developers.openai.com/codex) sessions into the same knowledge graph, under the same wallet, as Claude Code. Wiring is a separate one-time step because Codex hooks live in `~/.codex/config.toml`, not the Claude Code plugin hook system:
+
+```bash
+node <path-to-rd-plugin>/dist/setup-codex.mjs --apply
+```
+
+By default every GitHub-remoted repo is captured (matching the Claude Code path). Set `codex_repo_owners` via `/rd-setup`'s arg form to restrict capture to specific GitHub owners, or `*` to make the "all owners" behavior explicit. See [docs/SETUP.md](docs/SETUP.md#codex-sessions) for the trust-prompt caveat and the full flow.
+
 ## Turning it on and off
 
 **Locally** — set `"enabled": false` in `~/.rickydata/config.json`, or `"sink": "off"`, or export `RICKYDATA_KG_SINK=off`. Any of these fully disables capture.
