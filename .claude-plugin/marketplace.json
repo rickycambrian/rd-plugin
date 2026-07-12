@@ -1,0 +1,14 @@
+{
+  "name": "rickydata",
+  "owner": {
+    "name": "rickydata",
+    "url": "https://rickydata.org"
+  },
+  "plugins": [
+    {
+      "name": "rd-plugin",
+      "source": "./",
+      "description": "rickydata session tracking for Claude Code — wallet-scoped knowledge graph capture, local and remote TEE."
+    }
+  ]
+}
