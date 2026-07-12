@@ -1,6 +1,6 @@
 {
   "name": "rd-plugin",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "rickydata session tracking for Claude Code — captures your coding sessions into your wallet-scoped KFDB knowledge graph, locally or on the rickydata TEE stack.",
   "author": {
     "name": "rickydata",
