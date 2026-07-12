@@ -7,6 +7,7 @@ import { transcriptToEvents, parseTranscriptSummary } from '../src/lib/transcrip
 import { buildTraces } from '../src/lib/trace.js';
 import { writeSpool, spoolFileName } from '../src/lib/spool.js';
 import { buildGraphOperations } from '../src/lib/graph.js';
+import type { PendingEvent } from '../src/lib/event.js';
 import { claudeCodeSessionNodeId } from 'rickydata/kfdb';
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'transcript-sample.jsonl');
@@ -30,6 +31,60 @@ function fixtureTraces() {
     summary: parseTranscriptSummary(FIXTURE),
   });
 }
+
+/** A minimal turn's worth of captured events, starting with a UserPromptSubmit. */
+function syntheticEvents(prompt: string, sessionId = 'sess-xyz'): PendingEvent[] {
+  return [
+    { sequence: 0, hookEventName: 'UserPromptSubmit', claudeSessionId: sessionId, receivedAt: 1_700_000_000_000, prompt } as PendingEvent,
+    { sequence: 1, hookEventName: 'PostToolUse', claudeSessionId: sessionId, receivedAt: 1_700_000_000_100, toolName: 'Read', toolUseId: 't1', toolInput: { file_path: '/x' }, toolResponse: { success: true } } as PendingEvent,
+    { sequence: 2, hookEventName: 'Stop', claudeSessionId: sessionId, receivedAt: 1_700_000_000_200 } as PendingEvent,
+  ];
+}
+
+function sessionNodeOf(graphOperations: Array<Record<string, unknown>>): Record<string, unknown> {
+  const node = graphOperations.find(
+    (op) => op.operation === 'create_node' && op.label === 'ClaudeCodeSession',
+  );
+  if (!node) throw new Error('no ClaudeCodeSession node');
+  return node;
+}
+
+describe('initial_prompt event fallback (transcript-unavailable parity)', () => {
+  it('gateway spool: falls back to the first UserPromptSubmit when no transcript summary', () => {
+    const dir = tmp();
+    // summary undefined mimics the remote TEE workspace where the transcript JSONL isn't parseable.
+    const traces = buildTraces({ walletAddress: WALLET, claudeSessionId: 'sess-xyz', events: syntheticEvents('Fix the flaky test in auth.spec.ts'), summary: undefined });
+    const written = writeSpool(dir, traces);
+    const body = JSON.parse(fs.readFileSync(written[0], 'utf8'));
+    const node = sessionNodeOf(body.graphOperations);
+    expect((node.properties as Record<string, unknown>).initial_prompt).toEqual({ String: 'Fix the flaky test in auth.spec.ts' });
+  });
+
+  it('prefers the transcript-derived initial_prompt over the event fallback', () => {
+    const traces = buildTraces({
+      walletAddress: WALLET,
+      claudeSessionId: 'sess-xyz',
+      events: syntheticEvents('EVENT prompt should be ignored'),
+      summary: { messageCount: 2, filesChanged: 0, initialPrompt: 'TRANSCRIPT prompt wins' },
+    });
+    expect(traces[0].initialPrompt).toBe('TRANSCRIPT prompt wins');
+  });
+
+  it('omits initial_prompt when the flush unit has no UserPromptSubmit and no transcript', () => {
+    const events: PendingEvent[] = [
+      { sequence: 0, hookEventName: 'PostToolUse', claudeSessionId: 'sess-xyz', receivedAt: 1_700_000_000_000, toolName: 'Read', toolUseId: 't1', toolInput: {}, toolResponse: {} } as PendingEvent,
+      { sequence: 1, hookEventName: 'Stop', claudeSessionId: 'sess-xyz', receivedAt: 1_700_000_000_100 } as PendingEvent,
+    ];
+    const traces = buildTraces({ walletAddress: WALLET, claudeSessionId: 'sess-xyz', events, summary: undefined });
+    expect(traces[0].initialPrompt).toBeUndefined();
+  });
+
+  it('sanitizes the fallback the same way (trim + 4000-char cap)', () => {
+    const long = `  ${'a'.repeat(5000)}  `;
+    const traces = buildTraces({ walletAddress: WALLET, claudeSessionId: 'sess-xyz', events: syntheticEvents(long), summary: undefined });
+    expect(traces[0].initialPrompt).toBe('a'.repeat(4000));
+  });
+});
 
 describe('spoolFileName', () => {
   it('follows the trace-<sessionId>-<seq>.json contract', () => {

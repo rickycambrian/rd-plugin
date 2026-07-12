@@ -3047,11 +3047,21 @@ function firstDefined(values) {
   for (const v of values) if (v !== void 0 && v !== null && v !== "") return v;
   return void 0;
 }
+function firstUserPromptText(events) {
+  for (const e of events) {
+    if (e.hookEventName === "UserPromptSubmit" && typeof e.prompt === "string") {
+      const text = e.prompt.trim();
+      if (text) return text.slice(0, 4e3);
+    }
+  }
+  return void 0;
+}
 function buildTraces(input) {
   const { walletAddress, claudeSessionId, events, summary } = input;
   const groups = groupTurns(events);
   const sessionModel = firstDefined([summary?.model, ...events.map((e) => e.model)]);
   const sessionCwd = firstDefined([summary?.cwd, ...events.map((e) => e.cwd)]);
+  const sessionInitialPrompt = firstDefined([summary?.initialPrompt, firstUserPromptText(events)]);
   return groups.map((group, index) => {
     const turnModel = firstDefined([...group.map((e) => e.model), sessionModel]);
     const turnCwd = firstDefined([...group.map((e) => e.cwd), sessionCwd]);
@@ -3067,7 +3077,7 @@ function buildTraces(input) {
       completedAt: group[group.length - 1].receivedAt,
       events: group
     };
-    if (summary?.initialPrompt !== void 0) trace.initialPrompt = summary.initialPrompt;
+    if (sessionInitialPrompt !== void 0) trace.initialPrompt = sessionInitialPrompt;
     if (summary?.filesChanged !== void 0) trace.filesChanged = summary.filesChanged;
     if (summary?.parentSessionId !== void 0) trace.parentSessionId = summary.parentSessionId;
     return trace;
