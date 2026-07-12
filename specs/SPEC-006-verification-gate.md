@@ -55,4 +55,18 @@ Assert: `new_sessions = 0`.
 
 ## Production Proof
 
-> _No proof yet._
+**2026-07-12 — full gate PASSED (5/5).** Artifact: [`proof-2026-07-12.json`](../proof-2026-07-12.json) (all values below copied verbatim from it; `generatedAt: 2026-07-12T17:36:07.512Z`).
+
+- Wallet `0xb3e6fa9620933ba9a6037f4ff890ec5fad0ba113` · KFDB `http://34.60.37.158` · Agent Gateway `https://agents.rickydata.org` · plugin commit `32da2c284c51c56d5fdadda826c58e8f9b405842` (== the `RD_PLUGIN_COMMIT` pinned in the deployed TEE container `agent-gateway-blue`, verified by `docker inspect` env).
+
+| Step | Result | Evidence |
+|---|---|---|
+| 1. Local direct-sink | **pass** | Real `claude -p` session `a08f7c1e-c601-4977-aab9-0bc20a78ec8d` → `ClaudeCodeSession` node `b80e0807-aeb2-50bc-9d93-c2f82087a5e3`, `schema_version: 3`, private-scope direct read |
+| 2. Remote gateway-sink | **pass** | Production rickydata-code chat session `c5daf8b0-a035-43fd-b975-a6687db4a91c` (CLI invoked with `--plugin-dir` overlay @ pinned commit, spoolVersion 2 graph-ops forwarded by gateway) → node `896c88ed-38d0-5728-9465-79bfad9d55e3`, `schema_version: 3` |
+| 3. Parity | **pass** | Identical normalized property-key sets on both session nodes (12 keys incl. `initial_prompt`, `files_changed`, `schema_version`) — guaranteed by construction: both sinks run the same bundled SDK op builder |
+| 4. SAME_SESSION in-degree | **pass** | `HarnessSessionKey` `12fb470f-f1b4-597f-bde5-2df8eb8aabbc` for the local session: inDegree 2, sources `[ClaudeCodeSession, RickydataChatSession]` |
+| 5. Toggle-off zero writes | **pass** | KG disabled → chat session `153262ed-efa0-4ce1-8d78-ec589cf80977` → expected ids `fa7094e8-dcb1-56b6-b869-f781de4a06c2` / `19a97576-c0aa-5937-8c13-d6cea6e2a19d` both ABSENT |
+
+Blockers fixed en route (all live in production): rickydata-code CLI `run --plugin-dir` + `--session-id`→HookContext threading (rickydata_code `fa01bbe`, vendored registry `3b60d5f86`); spoolVersion 2 `graphOperations` parity contract (rd-plugin `312f4ba`, registry `94c7988e5`); `initial_prompt` UserPromptSubmit fallback for transcript-less TEE workspaces (rd-plugin `32da2c2`).
+
+Known soft edge (non-blocking): a single-turn session's detached Stop/SessionEnd flush can land after the gateway's last per-turn sweep; files persist and are picked up by the next sweep for that wallet workspace. Multi-turn sessions are unaffected (the gate chat uses two turns).

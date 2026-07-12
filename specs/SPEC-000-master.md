@@ -83,12 +83,12 @@ One unified Claude Code plugin (`rd-plugin@rickydata`) that tracks all sessions 
 | WS | Owner | Status |
 |---|---|---|
 | C — SDK session-link helpers | `sdk-link` | **DONE** — rickydata_SDK main `177ac9d` + `237aa12` (sessionLinkNodeId, buildSessionLinkOperations, claudeCodeSessionNodeId, pass-through fields; 18 tests) |
-| A — plugin core | `plugin-core` | **DONE (code)** — src (26 files) + 6 checked-in dist bundles + hooks.json + 52 tests; tsc/vitest/verify-dist/brand-gate/smoke all green, lead-reverified. SDK dep temporarily `file:../rickydata_SDK/packages/core`; repin to published `rickydata@1.11.0` (tag pushed) before the gate. |
-| B — gateway sink + remote injection | `gateway` | **DONE (code)** — mcp_deployments_registry branch `feat/rd-plugin-gateway-sink` @ `60515bf58` (tool-overlay extraction, runner injection gated on knowledgeGraphIngestion + `RD_PLUGIN_COMMIT` env, spool ingestor with forced authenticated wallet; 66 focused + 106 benchmark regression tests green). Inert until `RD_PLUGIN_COMMIT` set in container env. Merge + deploy pending gate. |
-| D — home + rickygit linking | `home-bridge` | **DONE** — rickydata_home main `752e81c` (bridge emits HarnessSessionKey + SAME_SESSION per chat session, wallet threaded via resolver; 121 sessions tests) + rickydata_git main `3d588db` (relay emits link ops for agent.session with authenticated wallet; 29 tests). Cross-impl pinned vector verified. Production SAME_SESSION in-degree proof deferred to final gate. |
-| E — migration + public onboarding | `docs-onboarding` | **E1 DONE** — rd-plugin `8dce165` (specs 001–007, docs, commands/skills, migrate-settings verified dry-run, e2e scripts, CI). E2 (apply migration) blocked on A. |
-| F — Codex fold-in | (post-gate) | blocked on final gate |
-| G — KFDB backend health | `kfdb-health` | in progress (parallel) |
+| A — plugin core | `plugin-core` | **DONE + GATE-PROVEN** — repinned to published `rickydata@1.11.0` (`921a769`); spoolVersion 2 `graphOperations` parity (`312f4ba`); `initial_prompt` UserPromptSubmit fallback for transcript-less workspaces (`32da2c2`, the gate-pinned commit); 62 tests, dist byte-verified. |
+| B — gateway sink + remote injection | `gateway` | **DONE + DEPLOYED** — merged to main and live in production TEE (`agent-gateway-blue`): tool-overlay injection gated on `knowledgeGraphIngestion`, CLI `run --plugin-dir` + `--session-id`→HookContext (rickydata_code `fa01bbe`, vendored `3b60d5f86`), spool v1+v2 sweep with validated `graphOperations` forwarding + duplicate-AgentChat-family skip (`94c7988e5`), `RD_PLUGIN_COMMIT=32da2c2…` repo variable. Gateway suite 6615 green. |
+| D — home + rickygit linking | `home-bridge` | **DONE + GATE-PROVEN** — rickydata_home `752e81c` + walletAddress threading (`d4a3126`) + `FORCE_SESSION_IDS` targeted re-bridge (`2e3666e`); rickydata_git `3d588db`. Production in-degree 2 proven on session `a08f7c1e…`. |
+| E — migration + public onboarding | `docs-onboarding` | **DONE** — E1 `8dce165` (specs, docs, e2e); E2 applied: rd-plugin installed as `rd-plugin@rickydata`, inline hooks migrated off `~/.claude/settings.json`. |
+| F — Codex fold-in | (post-gate) | UNBLOCKED — gate passed 2026-07-12 |
+| G — KFDB backend health | `kfdb-health` | DONE (parallel) |
 
 ## Final gate
 
@@ -96,4 +96,4 @@ One unified Claude Code plugin (`rd-plugin@rickydata`) that tracks all sessions 
 
 ## Production Proof
 
-> _No proof yet._
+**2026-07-12 — FULL GATE PASSED (5/5).** `proof-2026-07-12.json`, plugin commit `32da2c284c51c56d5fdadda826c58e8f9b405842`. Full step-by-step evidence (node ids, session ids, parity key sets) in [SPEC-006 Production Proof](SPEC-006-verification-gate.md#production-proof). Summary: local direct-sink node `b80e0807…` (session `a08f7c1e…`), remote TEE gateway-sink node `896c88ed…` (session `c5daf8b0…`), parity key-set identical, SAME_SESSION in-degree 2 on `12fb470f…`, toggle-off absence proven on session `153262ed…`.
