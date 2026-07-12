@@ -87,7 +87,7 @@ One unified Claude Code plugin (`rd-plugin@rickydata`) that tracks all sessions 
 | B — gateway sink + remote injection | `gateway` | **DONE + DEPLOYED** — merged to main and live in production TEE (`agent-gateway-blue`): tool-overlay injection gated on `knowledgeGraphIngestion`, CLI `run --plugin-dir` + `--session-id`→HookContext (rickydata_code `fa01bbe`, vendored `3b60d5f86`), spool v1+v2 sweep with validated `graphOperations` forwarding + duplicate-AgentChat-family skip (`94c7988e5`), `RD_PLUGIN_COMMIT=32da2c2…` repo variable. Gateway suite 6615 green. |
 | D — home + rickygit linking | `home-bridge` | **DONE + GATE-PROVEN** — rickydata_home `752e81c` + walletAddress threading (`d4a3126`) + `FORCE_SESSION_IDS` targeted re-bridge (`2e3666e`); rickydata_git `3d588db`. Production in-degree 2 proven on session `a08f7c1e…`. |
 | E — migration + public onboarding | `docs-onboarding` | **DONE** — E1 `8dce165` (specs, docs, e2e); E2 applied: rd-plugin installed as `rd-plugin@rickydata`, inline hooks migrated off `~/.claude/settings.json`. |
-| F — Codex fold-in | (post-gate) | UNBLOCKED — gate passed 2026-07-12 |
+| F — Codex fold-in | `plugin-core` | **DONE + CUTOVER APPLIED** — `71fc889` (CodexSession family via SDK builder in both sinks, Option A ruling) + `ed364b9` (60s graph-write timeout, production field fix) + `60fce6a` (--help guards); parity accepted, `~/.codex/config.toml` repointed, live codex session `019f5793…` verified in graph. Full evidence in [SPEC-005](SPEC-005-codex.md#production-proof). |
 | G — KFDB backend health | `kfdb-health` | DONE (parallel) |
 
 ## Final gate
