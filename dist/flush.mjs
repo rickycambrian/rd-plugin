@@ -3089,123 +3089,6 @@ async function postJson(url, body, headers, timeoutMs = 15e3) {
   }
 }
 
-// src/lib/queue.ts
-function enqueue(request) {
-  try {
-    fs6.mkdirSync(QUEUE_DIR, { recursive: true });
-    const name = `${Date.now()}-${Math.random().toString(36).slice(2)}.json`;
-    const entry = { ...request, queuedAt: (/* @__PURE__ */ new Date()).toISOString() };
-    fs6.writeFileSync(path5.join(QUEUE_DIR, name), JSON.stringify(entry), { mode: 384 });
-  } catch (err) {
-    log("warn", "enqueue failed", { error: err.message });
-  }
-}
-async function drainQueue(auth, limit = 500) {
-  let sent = 0;
-  let failed = 0;
-  let files;
-  try {
-    files = fs6.readdirSync(QUEUE_DIR).filter((f) => f.endsWith(".json"));
-  } catch {
-    return { sent: 0, failed: 0, remaining: 0 };
-  }
-  files.sort();
-  const batch = files.slice(0, limit);
-  for (const file of batch) {
-    const full = path5.join(QUEUE_DIR, file);
-    let request;
-    try {
-      request = JSON.parse(fs6.readFileSync(full, "utf8"));
-    } catch {
-      try {
-        fs6.rmSync(full, { force: true });
-      } catch {
-      }
-      continue;
-    }
-    const headers = {};
-    if (request.requiresBearer && auth.apiKey) headers.Authorization = `Bearer ${auth.apiKey}`;
-    if (request.requiresDerive && auth.deriveHeaders) Object.assign(headers, auth.deriveHeaders);
-    if (request.requiresBearer && !auth.apiKey || request.requiresDerive && !auth.deriveHeaders) {
-      failed += 1;
-      continue;
-    }
-    try {
-      const result = await postJson(request.url, request.body, headers);
-      if (result.ok) {
-        fs6.rmSync(full, { force: true });
-        sent += 1;
-      } else {
-        failed += 1;
-      }
-    } catch {
-      failed += 1;
-    }
-  }
-  let remaining = 0;
-  try {
-    remaining = fs6.readdirSync(QUEUE_DIR).filter((f) => f.endsWith(".json")).length;
-  } catch {
-    remaining = 0;
-  }
-  return { sent, failed, remaining };
-}
-
-// src/lib/trace.ts
-var RD_AGENT_ID = process.env.RD_KG_AGENT_ID || "claude-code";
-function groupTurns(events) {
-  const groups = [];
-  let current = null;
-  for (const event of events) {
-    if (current === null || event.hookEventName === "UserPromptSubmit") {
-      current = [];
-      groups.push(current);
-    }
-    current.push(event);
-  }
-  return groups.filter((g) => g.length > 0);
-}
-function firstDefined(values) {
-  for (const v of values) if (v !== void 0 && v !== null && v !== "") return v;
-  return void 0;
-}
-function firstUserPromptText(events) {
-  for (const e of events) {
-    if (e.hookEventName === "UserPromptSubmit" && typeof e.prompt === "string") {
-      const text = e.prompt.trim();
-      if (text) return text.slice(0, 4e3);
-    }
-  }
-  return void 0;
-}
-function buildTraces(input) {
-  const { walletAddress, claudeSessionId, events, summary } = input;
-  const groups = groupTurns(events);
-  const sessionModel = firstDefined([summary?.model, ...events.map((e) => e.model)]);
-  const sessionCwd = firstDefined([summary?.cwd, ...events.map((e) => e.cwd)]);
-  const sessionInitialPrompt = firstDefined([summary?.initialPrompt, firstUserPromptText(events)]);
-  return groups.map((group, index) => {
-    const turnModel = firstDefined([...group.map((e) => e.model), sessionModel]);
-    const turnCwd = firstDefined([...group.map((e) => e.cwd), sessionCwd]);
-    const trace = {
-      walletAddress,
-      agentId: RD_AGENT_ID,
-      sessionId: claudeSessionId,
-      turnIndex: index + 1,
-      claudeSessionId,
-      model: turnModel,
-      cwd: turnCwd,
-      startedAt: group[0].receivedAt,
-      completedAt: group[group.length - 1].receivedAt,
-      events: group
-    };
-    if (sessionInitialPrompt !== void 0) trace.initialPrompt = sessionInitialPrompt;
-    if (summary?.filesChanged !== void 0) trace.filesChanged = summary.filesChanged;
-    if (summary?.parentSessionId !== void 0) trace.parentSessionId = summary.parentSessionId;
-    return trace;
-  });
-}
-
 // node_modules/rickydata/dist/kfdb/agent-chat-trace.js
 import { createHash, randomUUID } from "node:crypto";
 var KG_NAMESPACE = uuidV5("rickydata-agent-chat-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
@@ -3701,6 +3584,7 @@ var AKC_PRIVATE_LABELS = [
 
 // src/lib/graph.ts
 var BATCH_SIZE = 900;
+var GRAPH_WRITE_TIMEOUT_MS = 6e4;
 function buildGraphOperations(walletAddress, traces) {
   const operations = [];
   for (const trace of traces) {
@@ -3723,6 +3607,123 @@ function batchOperations(operations) {
     batches.push(operations.slice(offset, offset + BATCH_SIZE));
   }
   return batches;
+}
+
+// src/lib/queue.ts
+function enqueue(request) {
+  try {
+    fs6.mkdirSync(QUEUE_DIR, { recursive: true });
+    const name = `${Date.now()}-${Math.random().toString(36).slice(2)}.json`;
+    const entry = { ...request, queuedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    fs6.writeFileSync(path5.join(QUEUE_DIR, name), JSON.stringify(entry), { mode: 384 });
+  } catch (err) {
+    log("warn", "enqueue failed", { error: err.message });
+  }
+}
+async function drainQueue(auth, limit = 500) {
+  let sent = 0;
+  let failed = 0;
+  let files;
+  try {
+    files = fs6.readdirSync(QUEUE_DIR).filter((f) => f.endsWith(".json"));
+  } catch {
+    return { sent: 0, failed: 0, remaining: 0 };
+  }
+  files.sort();
+  const batch = files.slice(0, limit);
+  for (const file of batch) {
+    const full = path5.join(QUEUE_DIR, file);
+    let request;
+    try {
+      request = JSON.parse(fs6.readFileSync(full, "utf8"));
+    } catch {
+      try {
+        fs6.rmSync(full, { force: true });
+      } catch {
+      }
+      continue;
+    }
+    const headers = {};
+    if (request.requiresBearer && auth.apiKey) headers.Authorization = `Bearer ${auth.apiKey}`;
+    if (request.requiresDerive && auth.deriveHeaders) Object.assign(headers, auth.deriveHeaders);
+    if (request.requiresBearer && !auth.apiKey || request.requiresDerive && !auth.deriveHeaders) {
+      failed += 1;
+      continue;
+    }
+    try {
+      const result = await postJson(request.url, request.body, headers, GRAPH_WRITE_TIMEOUT_MS);
+      if (result.ok) {
+        fs6.rmSync(full, { force: true });
+        sent += 1;
+      } else {
+        failed += 1;
+      }
+    } catch {
+      failed += 1;
+    }
+  }
+  let remaining = 0;
+  try {
+    remaining = fs6.readdirSync(QUEUE_DIR).filter((f) => f.endsWith(".json")).length;
+  } catch {
+    remaining = 0;
+  }
+  return { sent, failed, remaining };
+}
+
+// src/lib/trace.ts
+var RD_AGENT_ID = process.env.RD_KG_AGENT_ID || "claude-code";
+function groupTurns(events) {
+  const groups = [];
+  let current = null;
+  for (const event of events) {
+    if (current === null || event.hookEventName === "UserPromptSubmit") {
+      current = [];
+      groups.push(current);
+    }
+    current.push(event);
+  }
+  return groups.filter((g) => g.length > 0);
+}
+function firstDefined(values) {
+  for (const v of values) if (v !== void 0 && v !== null && v !== "") return v;
+  return void 0;
+}
+function firstUserPromptText(events) {
+  for (const e of events) {
+    if (e.hookEventName === "UserPromptSubmit" && typeof e.prompt === "string") {
+      const text = e.prompt.trim();
+      if (text) return text.slice(0, 4e3);
+    }
+  }
+  return void 0;
+}
+function buildTraces(input) {
+  const { walletAddress, claudeSessionId, events, summary } = input;
+  const groups = groupTurns(events);
+  const sessionModel = firstDefined([summary?.model, ...events.map((e) => e.model)]);
+  const sessionCwd = firstDefined([summary?.cwd, ...events.map((e) => e.cwd)]);
+  const sessionInitialPrompt = firstDefined([summary?.initialPrompt, firstUserPromptText(events)]);
+  return groups.map((group, index) => {
+    const turnModel = firstDefined([...group.map((e) => e.model), sessionModel]);
+    const turnCwd = firstDefined([...group.map((e) => e.cwd), sessionCwd]);
+    const trace = {
+      walletAddress,
+      agentId: RD_AGENT_ID,
+      sessionId: claudeSessionId,
+      turnIndex: index + 1,
+      claudeSessionId,
+      model: turnModel,
+      cwd: turnCwd,
+      startedAt: group[0].receivedAt,
+      completedAt: group[group.length - 1].receivedAt,
+      events: group
+    };
+    if (sessionInitialPrompt !== void 0) trace.initialPrompt = sessionInitialPrompt;
+    if (summary?.filesChanged !== void 0) trace.filesChanged = summary.filesChanged;
+    if (summary?.parentSessionId !== void 0) trace.parentSessionId = summary.parentSessionId;
+    return trace;
+  });
 }
 
 // src/lib/spool.ts
@@ -3989,7 +3990,7 @@ async function writeDirectUnit(input) {
       continue;
     }
     try {
-      const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, 2e4);
+      const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, GRAPH_WRITE_TIMEOUT_MS);
       if (!result.ok) {
         enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
         graphOk = false;

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { transcriptToEvents, parseTranscriptSummary } from '../src/lib/transcript.js';
 import { buildTraces, groupTurns } from '../src/lib/trace.js';
-import { buildGraphOperations, batchOperations } from '../src/lib/graph.js';
+import { buildGraphOperations, batchOperations, GRAPH_WRITE_TIMEOUT_MS } from '../src/lib/graph.js';
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'transcript-sample.jsonl');
 const WALLET = '0xb3e6fa9620933ba9a6037f4ff890ec5fad0ba113';
@@ -70,5 +70,14 @@ describe('batchOperations', () => {
     expect(batches[1].length).toBe(900);
     expect(batches[2].length).toBe(201);
     expect(batches.every((b) => b.length <= 900)).toBe(true);
+  });
+});
+
+describe('GRAPH_WRITE_TIMEOUT_MS', () => {
+  it('is 60s — the shared timeout for every graph-write path (writer, codex, drain)', () => {
+    // Real 900-op /api/v1/write batches take ~10-20s server-side; a tighter
+    // client timeout aborts writes the server completes. The queue drain also
+    // replays at this value so it is never shorter than the writer that queued.
+    expect(GRAPH_WRITE_TIMEOUT_MS).toBe(60000);
   });
 });

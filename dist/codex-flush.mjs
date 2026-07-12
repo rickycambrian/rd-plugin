@@ -2927,149 +2927,6 @@ async function postJson(url, body, headers, timeoutMs = 15e3) {
   }
 }
 
-// src/lib/queue.ts
-function enqueue(request) {
-  try {
-    fs4.mkdirSync(QUEUE_DIR, { recursive: true });
-    const name = `${Date.now()}-${Math.random().toString(36).slice(2)}.json`;
-    const entry = { ...request, queuedAt: (/* @__PURE__ */ new Date()).toISOString() };
-    fs4.writeFileSync(path4.join(QUEUE_DIR, name), JSON.stringify(entry), { mode: 384 });
-  } catch (err) {
-    log("warn", "enqueue failed", { error: err.message });
-  }
-}
-async function drainQueue(auth, limit = 500) {
-  let sent = 0;
-  let failed = 0;
-  let files;
-  try {
-    files = fs4.readdirSync(QUEUE_DIR).filter((f) => f.endsWith(".json"));
-  } catch {
-    return { sent: 0, failed: 0, remaining: 0 };
-  }
-  files.sort();
-  const batch = files.slice(0, limit);
-  for (const file of batch) {
-    const full = path4.join(QUEUE_DIR, file);
-    let request;
-    try {
-      request = JSON.parse(fs4.readFileSync(full, "utf8"));
-    } catch {
-      try {
-        fs4.rmSync(full, { force: true });
-      } catch {
-      }
-      continue;
-    }
-    const headers = {};
-    if (request.requiresBearer && auth.apiKey) headers.Authorization = `Bearer ${auth.apiKey}`;
-    if (request.requiresDerive && auth.deriveHeaders) Object.assign(headers, auth.deriveHeaders);
-    if (request.requiresBearer && !auth.apiKey || request.requiresDerive && !auth.deriveHeaders) {
-      failed += 1;
-      continue;
-    }
-    try {
-      const result = await postJson(request.url, request.body, headers);
-      if (result.ok) {
-        fs4.rmSync(full, { force: true });
-        sent += 1;
-      } else {
-        failed += 1;
-      }
-    } catch {
-      failed += 1;
-    }
-  }
-  let remaining = 0;
-  try {
-    remaining = fs4.readdirSync(QUEUE_DIR).filter((f) => f.endsWith(".json")).length;
-  } catch {
-    remaining = 0;
-  }
-  return { sent, failed, remaining };
-}
-
-// src/codex/pending.ts
-import fs5 from "node:fs";
-
-// src/codex/paths.ts
-import path5 from "node:path";
-var CODEX_PENDING_DIR = path5.join(STATE_DIR, "codex-pending");
-function codexPendingFileFor(codexSessionId) {
-  return path5.join(CODEX_PENDING_DIR, `${safeName(codexSessionId)}.jsonl`);
-}
-
-// src/codex/event.ts
-function str(value3) {
-  return typeof value3 === "string" ? value3 : void 0;
-}
-function normalizeCodexPendingEvent(raw, index) {
-  const e = raw && typeof raw === "object" ? raw : {};
-  return {
-    sequence: typeof e.sequence === "number" ? e.sequence : index,
-    hookEventName: str(e.hookEventName) ?? "Unknown",
-    codexSessionId: str(e.codexSessionId) ?? "unknown",
-    turnId: str(e.turnId),
-    model: str(e.model),
-    cwd: str(e.cwd),
-    receivedAt: typeof e.receivedAt === "number" ? e.receivedAt : Date.now(),
-    prompt: str(e.prompt),
-    lastAssistantMessage: typeof e.lastAssistantMessage === "string" ? e.lastAssistantMessage : e.lastAssistantMessage === null ? null : void 0,
-    stopHookActive: typeof e.stopHookActive === "boolean" ? e.stopHookActive : void 0,
-    toolName: str(e.toolName),
-    toolUseId: str(e.toolUseId),
-    toolInput: e.toolInput,
-    toolResponse: e.toolResponse,
-    repoOwner: str(e.repoOwner),
-    repoId: str(e.repoId),
-    repoFullName: str(e.repoFullName)
-  };
-}
-function toTraceEvent(e) {
-  return {
-    sequence: e.sequence,
-    hookEventName: e.hookEventName,
-    codexSessionId: e.codexSessionId,
-    turnId: e.turnId,
-    model: e.model,
-    cwd: e.cwd,
-    receivedAt: e.receivedAt,
-    prompt: e.prompt,
-    lastAssistantMessage: e.lastAssistantMessage,
-    stopHookActive: e.stopHookActive,
-    toolName: e.toolName,
-    toolUseId: e.toolUseId,
-    toolInput: e.toolInput,
-    toolResponse: e.toolResponse
-  };
-}
-
-// src/codex/pending.ts
-function readCodexPending(codexSessionId) {
-  let raw;
-  try {
-    raw = fs5.readFileSync(codexPendingFileFor(codexSessionId), "utf8");
-  } catch {
-    return [];
-  }
-  return raw.split("\n").filter((line) => line.trim()).map((line, index) => {
-    try {
-      return normalizeCodexPendingEvent(JSON.parse(line), index);
-    } catch {
-      return normalizeCodexPendingEvent({}, index);
-    }
-  }).sort((a, b) => a.sequence - b.sequence);
-}
-function clearCodexPending(codexSessionId) {
-  try {
-    fs5.rmSync(codexPendingFileFor(codexSessionId), { force: true });
-  } catch {
-  }
-}
-
-// src/codex/config.ts
-var RD_CODEX_AGENT_ID = process.env.RD_CODEX_AGENT_ID || "codex";
-
 // node_modules/rickydata/dist/kfdb/agent-chat-trace.js
 import { createHash, randomUUID } from "node:crypto";
 var KG_NAMESPACE = uuidV5("rickydata-agent-chat-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
@@ -3707,6 +3564,7 @@ var AKC_PRIVATE_LABELS = [
 
 // src/lib/graph.ts
 var BATCH_SIZE = 900;
+var GRAPH_WRITE_TIMEOUT_MS = 6e4;
 function batchOperations(operations) {
   const batches = [];
   for (let offset = 0; offset < operations.length; offset += BATCH_SIZE) {
@@ -3714,6 +3572,149 @@ function batchOperations(operations) {
   }
   return batches;
 }
+
+// src/lib/queue.ts
+function enqueue(request) {
+  try {
+    fs4.mkdirSync(QUEUE_DIR, { recursive: true });
+    const name = `${Date.now()}-${Math.random().toString(36).slice(2)}.json`;
+    const entry = { ...request, queuedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    fs4.writeFileSync(path4.join(QUEUE_DIR, name), JSON.stringify(entry), { mode: 384 });
+  } catch (err) {
+    log("warn", "enqueue failed", { error: err.message });
+  }
+}
+async function drainQueue(auth, limit = 500) {
+  let sent = 0;
+  let failed = 0;
+  let files;
+  try {
+    files = fs4.readdirSync(QUEUE_DIR).filter((f) => f.endsWith(".json"));
+  } catch {
+    return { sent: 0, failed: 0, remaining: 0 };
+  }
+  files.sort();
+  const batch = files.slice(0, limit);
+  for (const file of batch) {
+    const full = path4.join(QUEUE_DIR, file);
+    let request;
+    try {
+      request = JSON.parse(fs4.readFileSync(full, "utf8"));
+    } catch {
+      try {
+        fs4.rmSync(full, { force: true });
+      } catch {
+      }
+      continue;
+    }
+    const headers = {};
+    if (request.requiresBearer && auth.apiKey) headers.Authorization = `Bearer ${auth.apiKey}`;
+    if (request.requiresDerive && auth.deriveHeaders) Object.assign(headers, auth.deriveHeaders);
+    if (request.requiresBearer && !auth.apiKey || request.requiresDerive && !auth.deriveHeaders) {
+      failed += 1;
+      continue;
+    }
+    try {
+      const result = await postJson(request.url, request.body, headers, GRAPH_WRITE_TIMEOUT_MS);
+      if (result.ok) {
+        fs4.rmSync(full, { force: true });
+        sent += 1;
+      } else {
+        failed += 1;
+      }
+    } catch {
+      failed += 1;
+    }
+  }
+  let remaining = 0;
+  try {
+    remaining = fs4.readdirSync(QUEUE_DIR).filter((f) => f.endsWith(".json")).length;
+  } catch {
+    remaining = 0;
+  }
+  return { sent, failed, remaining };
+}
+
+// src/codex/pending.ts
+import fs5 from "node:fs";
+
+// src/codex/paths.ts
+import path5 from "node:path";
+var CODEX_PENDING_DIR = path5.join(STATE_DIR, "codex-pending");
+function codexPendingFileFor(codexSessionId) {
+  return path5.join(CODEX_PENDING_DIR, `${safeName(codexSessionId)}.jsonl`);
+}
+
+// src/codex/event.ts
+function str(value3) {
+  return typeof value3 === "string" ? value3 : void 0;
+}
+function normalizeCodexPendingEvent(raw, index) {
+  const e = raw && typeof raw === "object" ? raw : {};
+  return {
+    sequence: typeof e.sequence === "number" ? e.sequence : index,
+    hookEventName: str(e.hookEventName) ?? "Unknown",
+    codexSessionId: str(e.codexSessionId) ?? "unknown",
+    turnId: str(e.turnId),
+    model: str(e.model),
+    cwd: str(e.cwd),
+    receivedAt: typeof e.receivedAt === "number" ? e.receivedAt : Date.now(),
+    prompt: str(e.prompt),
+    lastAssistantMessage: typeof e.lastAssistantMessage === "string" ? e.lastAssistantMessage : e.lastAssistantMessage === null ? null : void 0,
+    stopHookActive: typeof e.stopHookActive === "boolean" ? e.stopHookActive : void 0,
+    toolName: str(e.toolName),
+    toolUseId: str(e.toolUseId),
+    toolInput: e.toolInput,
+    toolResponse: e.toolResponse,
+    repoOwner: str(e.repoOwner),
+    repoId: str(e.repoId),
+    repoFullName: str(e.repoFullName)
+  };
+}
+function toTraceEvent(e) {
+  return {
+    sequence: e.sequence,
+    hookEventName: e.hookEventName,
+    codexSessionId: e.codexSessionId,
+    turnId: e.turnId,
+    model: e.model,
+    cwd: e.cwd,
+    receivedAt: e.receivedAt,
+    prompt: e.prompt,
+    lastAssistantMessage: e.lastAssistantMessage,
+    stopHookActive: e.stopHookActive,
+    toolName: e.toolName,
+    toolUseId: e.toolUseId,
+    toolInput: e.toolInput,
+    toolResponse: e.toolResponse
+  };
+}
+
+// src/codex/pending.ts
+function readCodexPending(codexSessionId) {
+  let raw;
+  try {
+    raw = fs5.readFileSync(codexPendingFileFor(codexSessionId), "utf8");
+  } catch {
+    return [];
+  }
+  return raw.split("\n").filter((line) => line.trim()).map((line, index) => {
+    try {
+      return normalizeCodexPendingEvent(JSON.parse(line), index);
+    } catch {
+      return normalizeCodexPendingEvent({}, index);
+    }
+  }).sort((a, b) => a.sequence - b.sequence);
+}
+function clearCodexPending(codexSessionId) {
+  try {
+    fs5.rmSync(codexPendingFileFor(codexSessionId), { force: true });
+  } catch {
+  }
+}
+
+// src/codex/config.ts
+var RD_CODEX_AGENT_ID = process.env.RD_CODEX_AGENT_ID || "codex";
 
 // src/codex/trace.ts
 function groupTurns(events) {
@@ -3830,7 +3831,7 @@ async function writeCodexDirectUnit(input) {
       continue;
     }
     try {
-      const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, 2e4);
+      const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, GRAPH_WRITE_TIMEOUT_MS);
       if (!result.ok) {
         enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
         graphOk = false;

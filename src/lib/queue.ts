@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { QUEUE_DIR } from './paths.js';
 import { postJson } from './http.js';
+import { GRAPH_WRITE_TIMEOUT_MS } from './graph.js';
 import { log } from './log.js';
 import type { DeriveHeaders } from './derive.js';
 
@@ -65,7 +66,10 @@ export async function drainQueue(auth: DrainAuth, limit = 500): Promise<{ sent: 
       continue;
     }
     try {
-      const result = await postJson(request.url, request.body, headers);
+      // Replay at the graph-write timeout (60s), NOT postJson's 15s default: a
+      // drain that replays at a shorter timeout than the writer that queued the
+      // entry can never make progress on batches the server takes ~10-20s to run.
+      const result = await postJson(request.url, request.body, headers, GRAPH_WRITE_TIMEOUT_MS);
       if (result.ok) {
         fs.rmSync(full, { force: true });
         sent += 1;

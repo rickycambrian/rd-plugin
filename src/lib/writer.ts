@@ -3,7 +3,7 @@ import type { PendingEvent } from './event.js';
 import type { TranscriptSummary } from './transcript.js';
 import type { DeriveHeaders } from './derive.js';
 import { buildTraces } from './trace.js';
-import { buildGraphOperations, batchOperations } from './graph.js';
+import { buildGraphOperations, batchOperations, GRAPH_WRITE_TIMEOUT_MS } from './graph.js';
 import { writeSpool } from './spool.js';
 import { writeLegacyStream } from './legacy-stream.js';
 import { postJson } from './http.js';
@@ -58,7 +58,7 @@ export async function writeDirectUnit(input: DirectUnitInput): Promise<DirectUni
       continue;
     }
     try {
-      const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, 20000);
+      const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, GRAPH_WRITE_TIMEOUT_MS);
       if (!result.ok) {
         enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
         graphOk = false;

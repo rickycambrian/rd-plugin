@@ -3603,6 +3603,7 @@ async function postJson(url, body, headers, timeoutMs = 15e3) {
 
 // src/lib/graph.ts
 var BATCH_SIZE = 900;
+var GRAPH_WRITE_TIMEOUT_MS = 6e4;
 function buildGraphOperations(walletAddress, traces) {
   const operations = [];
   for (const trace of traces) {
@@ -3907,7 +3908,7 @@ async function writeDirectUnit(input) {
       continue;
     }
     try {
-      const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, 2e4);
+      const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, GRAPH_WRITE_TIMEOUT_MS);
       if (!result.ok) {
         enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
         graphOk = false;

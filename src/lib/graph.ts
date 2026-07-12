@@ -5,6 +5,17 @@ import type { DeriveHeaders } from './derive.js';
 
 const BATCH_SIZE = 900;
 
+/**
+ * Client timeout for a single graph-write batch. Real production `/api/v1/write`
+ * batches of the full 900-op ceiling routinely take 10–20s server-side
+ * (measured execution_time_ms 10.7s / 11.4s / 19.5s), so a tighter client
+ * timeout aborts a write the server would have completed and needlessly queues
+ * it. 60s leaves ample headroom. This is the single source of truth for every
+ * graph-write path (direct flush, codex flush, queue drain) — the drain MUST
+ * replay at >= the writer's timeout or a queued entry can never make progress.
+ */
+export const GRAPH_WRITE_TIMEOUT_MS = 60000;
+
 type GraphOp = Record<string, unknown>;
 
 /**
@@ -44,7 +55,7 @@ export async function writeGraph(
   apiKey: string,
   deriveHeaders: DeriveHeaders,
   operations: GraphOp[],
-  timeoutMs = 20000,
+  timeoutMs = GRAPH_WRITE_TIMEOUT_MS,
 ): Promise<number> {
   const base = apiUrl.replace(/\/$/, '');
   const headers = { Authorization: `Bearer ${apiKey}`, ...deriveHeaders };

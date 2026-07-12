@@ -1,6 +1,6 @@
 import type { RdConfig } from '../lib/config.js';
 import type { DeriveHeaders } from '../lib/derive.js';
-import { batchOperations } from '../lib/graph.js';
+import { batchOperations, GRAPH_WRITE_TIMEOUT_MS } from '../lib/graph.js';
 import { postJson } from '../lib/http.js';
 import { enqueue } from '../lib/queue.js';
 import { log } from '../lib/log.js';
@@ -46,7 +46,7 @@ export async function writeCodexDirectUnit(input: CodexDirectUnitInput): Promise
       continue;
     }
     try {
-      const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, 20000);
+      const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, GRAPH_WRITE_TIMEOUT_MS);
       if (!result.ok) {
         enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
         graphOk = false;
