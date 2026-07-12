@@ -143,14 +143,30 @@ export async function getKnown(client, refs) {
   return { output, resolved: res.resolved, missing: res.missing, requested: res.requested };
 }
 
-/** List a private label and filter to a claude session id (matches claude_session_id or session_id). */
-export async function findBySession(client, label, claudeSessionId, limit = 300) {
-  const listed = await client.listEntities(label, { scope: 'private', limit });
-  return (listed.items || []).filter((item) => {
-    const cs = prop(item, 'claude_session_id');
-    const ss = prop(item, 'session_id');
-    return cs === claudeSessionId || ss === claudeSessionId;
-  });
+/**
+ * List a private label and filter to a claude session id (matches
+ * claude_session_id or session_id). Paginates via offset — encrypted props
+ * can't be filtered server-side, and a single window under-counts once a
+ * wallet has more rows of a label than one page (seen live at 1000+
+ * RickydataChatSession rows with the old single limit=300 window).
+ * `maxRows` bounds the scan; stops early once a match is found.
+ */
+export async function findBySession(client, label, claudeSessionId, maxRows = 10_000) {
+  const pageSize = 300;
+  const matches = [];
+  for (let offset = 0; offset < maxRows; offset += pageSize) {
+    const listed = await client.listEntities(label, { scope: 'private', limit: pageSize, offset });
+    const items = listed.items || [];
+    for (const item of items) {
+      const cs = prop(item, 'claude_session_id');
+      const ss = prop(item, 'session_id');
+      if (cs === claudeSessionId || ss === claudeSessionId) matches.push(item);
+    }
+    if (matches.length > 0) break; // existence is what callers need; stop paging
+    const total = typeof listed.total === 'number' ? listed.total : Infinity;
+    if (items.length < pageSize || offset + pageSize >= total) break;
+  }
+  return matches;
 }
 
 /**
@@ -167,7 +183,7 @@ export async function findBySession(client, label, claudeSessionId, limit = 300)
  * [git]) discovered by private listEntities + claude_session_id filter.
  */
 export async function sameSessionInDegree(client, walletAddress, claudeSessionId, opts = {}) {
-  const limit = opts.limit || 300;
+  const maxRows = opts.limit || 10_000;
   const extraFamilies = opts.extraFamilies || ['RickydataChatSession', 'RickydataAgentSession'];
 
   const harnessId = harnessKeyNodeId(walletAddress, claudeSessionId);
@@ -182,7 +198,7 @@ export async function sameSessionInDegree(client, walletAddress, claudeSessionId
   if (output[`${CLAUDE_CODE_SESSION_LABEL}:${ccId}`]) sources.push(CLAUDE_CODE_SESSION_LABEL);
   for (const label of extraFamilies) {
     try {
-      const found = await findBySession(client, label, claudeSessionId, limit);
+      const found = await findBySession(client, label, claudeSessionId, maxRows);
       if (found.length > 0) sources.push(label);
     } catch {
       // label may not exist in this wallet's graph yet — not an error for in-degree
