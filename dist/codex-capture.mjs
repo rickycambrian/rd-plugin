@@ -122,19 +122,18 @@ function shouldTrack(config, cwd) {
 
 // src/codex/config.ts
 import fs3 from "node:fs";
-var DEFAULT_CODEX_REPO_OWNERS = ["rickycambrian"];
 var RD_CODEX_AGENT_ID = process.env.RD_CODEX_AGENT_ID || "codex";
 function loadCodexRepoOwners() {
-  let owners = DEFAULT_CODEX_REPO_OWNERS;
   try {
     const raw = JSON.parse(fs3.readFileSync(CONFIG_FILE, "utf8"));
     if (Array.isArray(raw.codex_repo_owners)) {
       const configured = raw.codex_repo_owners.filter((v) => typeof v === "string" && v.trim() !== "");
-      if (configured.length > 0) owners = configured;
+      if (configured.some((o) => o.trim() === "*")) return null;
+      if (configured.length > 0) return configured.map((o) => o.toLowerCase());
     }
   } catch {
   }
-  return owners.map((o) => o.toLowerCase());
+  return null;
 }
 
 // src/codex/repo.ts
@@ -166,7 +165,7 @@ async function ownedRepository(cwd, owners) {
   const parsed = parseGitHubRemote(remoteUrl);
   if (!parsed) return null;
   const owner = parsed.owner.toLowerCase();
-  if (!owners.includes(owner)) return null;
+  if (owners !== null && !owners.includes(owner)) return null;
   return { owner, repository: parsed.repository, remoteUrl };
 }
 

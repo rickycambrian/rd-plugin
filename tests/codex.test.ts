@@ -8,7 +8,7 @@ import { buildCodexTraces, groupTurns } from '../src/codex/trace.js';
 import { buildCodexGraphOperations, extractCodexSessionNodeId } from '../src/codex/graph.js';
 import { writeCodexSpool, codexSpoolFileName } from '../src/codex/spool.js';
 import { loadCodexRepoOwners, RD_CODEX_AGENT_ID } from '../src/codex/config.js';
-import { parseGitHubRemote } from '../src/codex/repo.js';
+import { parseGitHubRemote, ownedRepository } from '../src/codex/repo.js';
 import { runCodexCapture } from '../src/codex/capture-core.js';
 import { readCodexPending } from '../src/codex/pending.js';
 import type { CodexPendingEvent } from '../src/codex/event.js';
@@ -136,15 +136,27 @@ describe('codex direct/gateway parity', () => {
 });
 
 describe('codex config', () => {
-  it('defaults codex_repo_owners to [rickycambrian] and lowercases overrides', () => {
-    expect(loadCodexRepoOwners()).toEqual(['rickycambrian']);
+  it('disables the owner gate when codex_repo_owners is unset, lowercases configured lists, and treats "*" as gate-off', () => {
+    expect(loadCodexRepoOwners()).toBeNull();
     fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
     fs.writeFileSync(CONFIG_FILE, JSON.stringify({ codex_repo_owners: ['MyOrg', 'Other'] }));
     expect(loadCodexRepoOwners()).toEqual(['myorg', 'other']);
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ codex_repo_owners: ['*'] }));
+    expect(loadCodexRepoOwners()).toBeNull();
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ codex_repo_owners: [] }));
+    expect(loadCodexRepoOwners()).toBeNull();
   });
 
   it('defaults the codex agent id to `codex`', () => {
     expect(RD_CODEX_AGENT_ID).toBe('codex');
+  });
+
+  it('resolves any GitHub repo when the owner gate is off (owners=null) and still gates on a configured list', async () => {
+    const cwd = process.cwd(); // this repo: github.com/rickycambrian/rd-plugin
+    const gateOff = await ownedRepository(cwd, null);
+    expect(gateOff?.owner).toBe('rickycambrian');
+    expect(gateOff?.repository).toBe('rd-plugin');
+    expect(await ownedRepository(cwd, ['someoneelse'])).toBeNull();
   });
 
   it('parses scp and https GitHub remotes', () => {

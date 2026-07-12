@@ -26,14 +26,13 @@ export function parseGitHubRemote(remoteUrl: string): { owner: string; repositor
 }
 
 /**
- * Resolve the owned GitHub repository for a working directory, or null if the
- * cwd is not a git repo, has no GitHub origin, or the origin owner is not in the
- * allowlist. Ported from the legacy ~/.codex hook so capture-time gating is
- * behaviour-identical; the allowlist is `codex_repo_owners` (default
- * `['rickycambrian']`). Owner comparison is case-insensitive; the returned owner
- * is normalized to the matched (lowercased) allowlist entry.
+ * Resolve the GitHub repository for a working directory, or null if the cwd is
+ * not a git repo, has no GitHub origin, or (when an `owners` allowlist is set)
+ * the origin owner is not in the allowlist. `owners: null` disables the owner
+ * gate: any GitHub-remoted repo resolves. Owner comparison is case-insensitive;
+ * the returned owner is lowercased.
  */
-export async function ownedRepository(cwd: string | undefined, owners: string[]): Promise<OwnedRepository | null> {
+export async function ownedRepository(cwd: string | undefined, owners: string[] | null): Promise<OwnedRepository | null> {
   if (!cwd) return null;
   const remoteUrl = await new Promise<string>((resolve) => {
     try {
@@ -47,6 +46,6 @@ export async function ownedRepository(cwd: string | undefined, owners: string[])
   const parsed = parseGitHubRemote(remoteUrl);
   if (!parsed) return null;
   const owner = parsed.owner.toLowerCase();
-  if (!owners.includes(owner)) return null;
+  if (owners !== null && !owners.includes(owner)) return null;
   return { owner, repository: parsed.repository, remoteUrl };
 }

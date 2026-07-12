@@ -12,7 +12,7 @@ export interface CodexCaptureResult {
   shouldFlush: boolean;
 }
 
-type RepoResolver = (cwd: string | undefined, owners: string[]) => Promise<OwnedRepository | null>;
+type RepoResolver = (cwd: string | undefined, owners: string[] | null) => Promise<OwnedRepository | null>;
 
 /**
  * Codex capture core: gate on sink/kill-switch/excluded-dir and the owned-repo

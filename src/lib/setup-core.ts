@@ -8,7 +8,7 @@ export type ConfigRecord = Record<string, unknown>;
 
 const STRING_KEYS = new Set(['api_url', 'api_key', 'private_key', 'sink', 'log_level']);
 const BOOL_KEYS = new Set(['enabled', 'track_messages', 'track_files', 'track_git']);
-const LIST_KEYS = new Set(['excluded_directories']);
+const LIST_KEYS = new Set(['excluded_directories', 'codex_repo_owners']);
 const SECRET_KEYS = new Set(['api_key', 'private_key']);
 const SINK_VALUES = new Set(['direct', 'gateway', 'off']);
 

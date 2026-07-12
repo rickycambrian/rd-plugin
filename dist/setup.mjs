@@ -54,7 +54,7 @@ function log(level, message, fields = {}) {
 // src/lib/setup-core.ts
 var STRING_KEYS = /* @__PURE__ */ new Set(["api_url", "api_key", "private_key", "sink", "log_level"]);
 var BOOL_KEYS = /* @__PURE__ */ new Set(["enabled", "track_messages", "track_files", "track_git"]);
-var LIST_KEYS = /* @__PURE__ */ new Set(["excluded_directories"]);
+var LIST_KEYS = /* @__PURE__ */ new Set(["excluded_directories", "codex_repo_owners"]);
 var SECRET_KEYS = /* @__PURE__ */ new Set(["api_key", "private_key"]);
 var SINK_VALUES = /* @__PURE__ */ new Set(["direct", "gateway", "off"]);
 function parseSetupArgs(args) {
