@@ -10,6 +10,17 @@
  *   5. toggle-off zero-writes       (toggle-proof.mjs)
  *   6. emit proof-<date>.json
  *
+ * All graph assertions read S2D-encrypted wallet-scoped nodes via the SDK
+ * private-scope direct-read path (kg.mjs) — /api/v1/kql cannot see them.
+ *
+ * The lead supplies the three real session ids (from live `claude -p` /
+ * rickydata-code / disabled runs) via flags or env:
+ *   --local-session-id  <uuid>   (RD_LOCAL_SID)
+ *   --remote-session-id <uuid>   (RD_REMOTE_SID)
+ *   --toggle-session-id <uuid>   (RD_TOGGLE_SID)
+ * A session touched by >=2 writer families (direct + home/git link) is used for
+ * the in-degree check; defaults to the local session (override --indegree-session-id).
+ *
  * Fails (exit 1) if any step is not `pass`. Writes proof-<YYYY-MM-DD>.json into
  * the repo root for the lead to transcribe into SPEC-006 Production Proof.
  *
@@ -18,41 +29,76 @@
  */
 
 import { writeFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { kql } from './kql.mjs';
+import { makeClient, getKnown, claudeSessionNodeId, sameSessionInDegree, CLAUDE_CODE_SESSION_LABEL } from './kg.mjs';
 import { runLocalProof } from './local-proof.mjs';
 import { runRemoteProof } from './remote-proof.mjs';
 import { runToggleProof } from './toggle-proof.mjs';
 
 const GATE_WALLET = (process.env.RD_GATE_WALLET || '0xb3e6fa9620933ba9a6037f4ff890ec5fad0ba113').toLowerCase();
+const AGENT_GATEWAY = (process.env.RD_AGENT_GATEWAY || 'https://agents.rickydata.org').replace(/\/+$/, '');
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+/** Plugin commit hash bound into the proof (TEE content-addressing). Fail-soft to null. */
+function resolvePluginCommit() {
+  if (process.env.RD_PLUGIN_COMMIT) return process.env.RD_PLUGIN_COMMIT.trim();
+  try {
+    return execSync('git rev-parse HEAD', { cwd: REPO_ROOT, encoding: 'utf8' }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function parseArgs(argv) {
+  const args = {
+    localSessionId: process.env.RD_LOCAL_SID || null,
+    remoteSessionId: process.env.RD_REMOTE_SID || null,
+    toggleSessionId: process.env.RD_TOGGLE_SID || null,
+    indegreeSessionId: process.env.RD_INDEGREE_SID || null,
+    synthetic: false,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--local-session-id') args.localSessionId = argv[++i];
+    else if (argv[i] === '--remote-session-id') args.remoteSessionId = argv[++i];
+    else if (argv[i] === '--toggle-session-id') args.toggleSessionId = argv[++i];
+    else if (argv[i] === '--indegree-session-id') args.indegreeSessionId = argv[++i];
+    else if (argv[i] === '--synthetic') args.synthetic = true;
+    else if (argv[i] === '--help' || argv[i] === '-h') args.help = true;
+  }
+  return args;
+}
+
+/** Normalized property-key set of a fetched node, excluding volatile/identity keys. */
+function normPropKeys(node) {
+  if (!node) return null;
+  const raw = node.properties && typeof node.properties === 'object' ? node.properties : node;
+  const exclude = new Set(['started_at', 'completed_at', 'claude_session_id', 'node_id', 'id', 'label']);
+  return Object.keys(raw).filter((k) => !exclude.has(k)).sort();
+}
+
 /**
- * Step 3 — parity. Compare the property-key/label shape of the direct-sink and
- * gateway-sink session nodes for the two driven sessions (timestamps and session
- * ids excluded). Zero structural diff = pass.
+ * Step 3 — parity. Compare the property-key shape of the direct-sink and
+ * gateway-sink ClaudeCodeSession nodes (fetched by deterministic id via private
+ * direct read). Zero structural diff = pass.
  */
 async function parityCheck(localSid, remoteSid) {
-  const shapeQuery = `MATCH (s:ClaudeCodeSession {claude_session_id: $sid, wallet_address: $wallet})
-                      RETURN keys(s) AS prop_keys, labels(s) AS labels`;
   try {
-    const [{ data: a }, { data: b }] = await Promise.all([
-      kql(shapeQuery, { sid: localSid, wallet: GATE_WALLET }),
-      kql(shapeQuery, { sid: remoteSid, wallet: GATE_WALLET }),
+    const { client, walletAddress } = await makeClient({ scope: 'private' });
+    const localId = claudeSessionNodeId(walletAddress, localSid);
+    const remoteId = claudeSessionNodeId(walletAddress, remoteSid);
+    const { output } = await getKnown(client, [
+      { label: CLAUDE_CODE_SESSION_LABEL, id: localId },
+      { label: CLAUDE_CODE_SESSION_LABEL, id: remoteId },
     ]);
-    if (a.length === 0 || b.length === 0) {
-      return { step: 'parity', pass: false, reason: 'one or both sessions missing', a, b, timestamp: new Date().toISOString() };
+    const direct = normPropKeys(output[`${CLAUDE_CODE_SESSION_LABEL}:${localId}`]);
+    const gateway = normPropKeys(output[`${CLAUDE_CODE_SESSION_LABEL}:${remoteId}`]);
+    if (!direct || !gateway) {
+      return { step: 'parity', pass: false, reason: 'one or both session nodes missing', direct, gateway, timestamp: new Date().toISOString() };
     }
-    const norm = (row) => ({
-      labels: [...(row.labels || [])].sort(),
-      // exclude volatile props from the shape comparison
-      keys: [...(row.prop_keys || [])].filter((k) => !['started_at', 'completed_at', 'claude_session_id', 'node_id'].includes(k)).sort(),
-    });
-    const na = norm(a[0]);
-    const nb = norm(b[0]);
-    const pass = JSON.stringify(na) === JSON.stringify(nb);
-    return { step: 'parity', pass, direct: na, gateway: nb, timestamp: new Date().toISOString() };
+    const pass = JSON.stringify(direct) === JSON.stringify(gateway);
+    return { step: 'parity', pass, direct, gateway, timestamp: new Date().toISOString() };
   } catch (err) {
     return { step: 'parity', pass: false, reason: err.message, timestamp: new Date().toISOString() };
   }
@@ -60,37 +106,51 @@ async function parityCheck(localSid, remoteSid) {
 
 /**
  * Step 4 — SAME_SESSION in-degree >= 2 on the HarnessSessionKey merge node for a
- * session touched by multiple writers.
+ * session touched by multiple writer families. Measured via kg.sameSessionInDegree
+ * (distinct source session-node families present == SAME_SESSION in-degree, since
+ * KFDB exposes no wallet-scoped edge read).
  */
-async function sameSessionInDegree(sid) {
-  const query = `MATCH (k:HarnessSessionKey {claude_session_id: $sid, wallet_address: $wallet})<-[:SAME_SESSION]-(src)
-                 RETURN count(src) AS in_degree, collect(DISTINCT labels(src)) AS source_labels`;
+async function inDegreeCheck(sid) {
   try {
-    const { data } = await kql(query, { sid, wallet: GATE_WALLET });
-    const inDegree = data.length ? Number(data[0].in_degree) : 0;
-    const sourceLabels = data.length ? data[0].source_labels : [];
-    return { step: 'same-session-in-degree', pass: inDegree >= 2, sid, inDegree, sourceLabels, query, timestamp: new Date().toISOString() };
+    const { client, walletAddress } = await makeClient({ scope: 'private' });
+    const res = await sameSessionInDegree(client, walletAddress, sid);
+    return {
+      step: 'same-session-in-degree',
+      pass: res.harnessPresent && res.inDegree >= 2,
+      sid,
+      inDegree: res.inDegree,
+      sourceLabels: res.sources,
+      harnessPresent: res.harnessPresent,
+      harnessId: res.harnessId,
+      timestamp: new Date().toISOString(),
+    };
   } catch (err) {
-    return { step: 'same-session-in-degree', pass: false, sid, reason: err.message, query, timestamp: new Date().toISOString() };
+    return { step: 'same-session-in-degree', pass: false, sid, reason: err.message, timestamp: new Date().toISOString() };
   }
 }
 
 async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  if (args.help) {
+    console.log('usage: node scripts/e2e/full-gate.mjs --local-session-id <uuid> --remote-session-id <uuid> --toggle-session-id <uuid> [--indegree-session-id <uuid>] [--synthetic]');
+    process.exit(0);
+  }
+
   console.error('[full-gate] step 1: local direct-sink proof');
-  const local = await runLocalProof();
+  const local = await runLocalProof({ sessionId: args.localSessionId, synthetic: args.synthetic });
 
   console.error('[full-gate] step 2: remote gateway-sink proof');
-  const remote = await runRemoteProof();
+  const remote = await runRemoteProof({ sessionId: args.remoteSessionId });
 
   console.error('[full-gate] step 3: parity');
   const parity = await parityCheck(local.claudeSessionId, remote.claudeSessionId);
 
   console.error('[full-gate] step 4: SAME_SESSION in-degree');
-  // Prefer the local session (touched by direct + link writers); fall back to remote.
-  const inDegree = await sameSessionInDegree(local.claudeSessionId);
+  const inDegreeSid = args.indegreeSessionId || local.claudeSessionId;
+  const inDegree = await inDegreeCheck(inDegreeSid);
 
   console.error('[full-gate] step 5: toggle-off zero-writes');
-  const toggle = await runToggleProof();
+  const toggle = await runToggleProof({ sessionId: args.toggleSessionId });
 
   const steps = { local, remote, parity, inDegree, toggle };
   const allPass = Object.values(steps).every((s) => s.pass === true);
@@ -100,6 +160,8 @@ async function main() {
     gate: 'rd-plugin full-gate',
     wallet: GATE_WALLET,
     kfdb: process.env.RICKYDATA_API_URL || 'http://34.60.37.158',
+    agentGateway: AGENT_GATEWAY,
+    pluginCommit: resolvePluginCommit(),
     all_pass: allPass,
     steps,
     generatedAt: new Date().toISOString(),
