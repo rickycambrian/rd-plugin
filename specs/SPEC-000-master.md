@@ -81,13 +81,13 @@ One unified Claude Code plugin (`rd-plugin@rickydata`) that tracks all sessions 
 
 | WS | Owner | Status |
 |---|---|---|
-| C — SDK session-link helpers | `sdk-link` | pending |
-| A — plugin core | `plugin-core` | pending (D1 validated) |
-| B — gateway sink + remote injection | `gateway` | pending |
-| D — home + rickygit linking | `home-bridge` | pending |
-| E — migration + public onboarding | `docs-onboarding` | pending |
+| C — SDK session-link helpers | `sdk-link` | **DONE** — rickydata_SDK main `177ac9d` + `237aa12` (sessionLinkNodeId, buildSessionLinkOperations, claudeCodeSessionNodeId, pass-through fields; 18 tests) |
+| A — plugin core | `plugin-core` | in progress (D1 validated) |
+| B — gateway sink + remote injection | `gateway` | **DONE (code)** — mcp_deployments_registry branch `feat/rd-plugin-gateway-sink` @ `60515bf58` (tool-overlay extraction, runner injection gated on knowledgeGraphIngestion + `RD_PLUGIN_COMMIT` env, spool ingestor with forced authenticated wallet; 66 focused + 106 benchmark regression tests green). Inert until `RD_PLUGIN_COMMIT` set in container env. Merge + deploy pending gate. |
+| D — home + rickygit linking | `home-bridge` | in progress |
+| E — migration + public onboarding | `docs-onboarding` | **E1 DONE** — rd-plugin `8dce165` (specs 001–007, docs, commands/skills, migrate-settings verified dry-run, e2e scripts, CI). E2 (apply migration) blocked on A. |
 | F — Codex fold-in | (post-gate) | blocked on final gate |
-| G — KFDB backend health | `kfdb-health` | pending (parallel) |
+| G — KFDB backend health | `kfdb-health` | in progress (parallel) |
 
 ## Final gate
 
