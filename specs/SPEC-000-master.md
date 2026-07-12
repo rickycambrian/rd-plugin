@@ -19,7 +19,7 @@ One unified Claude Code plugin (`rd-plugin@rickydata`) that tracks all sessions 
 
 | # | Decision | Status |
 |---|---|---|
-| D1 | Plugin at repo root; `marketplace.json` coexists with `source:"./"` | **VALIDATED 2026-07-12** — `claude plugin marketplace add <path>` → marketplace `rickydata` registered; `claude plugin install rd-plugin@rickydata` → enabled, scope user. GitHub-form re-validation after first push (WS-E). |
+| D1 | Plugin at repo root; `marketplace.json` coexists with `source:"./"` | **VALIDATED 2026-07-12** — local path form AND GitHub form both proven: in a fresh isolated `$HOME`, `claude plugin marketplace add rickycambrian/rd-plugin` → marketplace `rickydata` registered; `claude plugin install rd-plugin@rickydata` → Version 1.0.0, scope user, enabled. |
 | D2 | TypeScript src → checked-in esbuild single-file dist, zero runtime deps | locked |
 | D3 | Two-stage capture (fast appender + detached flusher on Stop/SessionEnd) | locked |
 | D4 | Sink switch `RICKYDATA_KG_SINK` ∈ direct / gateway / off | locked |
