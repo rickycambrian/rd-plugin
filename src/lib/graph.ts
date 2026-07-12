@@ -1,0 +1,67 @@
+import type { ClaudeCodeHookTrace } from 'rickydata/kfdb';
+import { buildClaudeCodeHookTraceOperations, buildSessionLinkOperations, claudeCodeSessionNodeId } from 'rickydata/kfdb';
+import { postJson } from './http.js';
+import type { DeriveHeaders } from './derive.js';
+
+const BATCH_SIZE = 900;
+
+type GraphOp = Record<string, unknown>;
+
+/**
+ * Build the schema-v3 graph operations for a set of traces. For each trace we
+ * emit the SDK's ClaudeCodeHookTrace ops, then link the session node into the
+ * shared SAME_SESSION star (D6) by emitting a HarnessSessionKey merge node +
+ * edge from the ClaudeCodeSession node.
+ *
+ * The ClaudeCodeSession node id comes from the SDK's own
+ * `claudeCodeSessionNodeId` helper (the exact id the builder emits) so the link
+ * cannot drift from the builder's id recipe.
+ */
+export function buildGraphOperations(walletAddress: string, traces: ClaudeCodeHookTrace[]): GraphOp[] {
+  const operations: GraphOp[] = [];
+  for (const trace of traces) {
+    operations.push(...buildClaudeCodeHookTraceOperations(trace));
+    const fromNodeId = claudeCodeSessionNodeId(trace);
+    operations.push(
+      ...buildSessionLinkOperations({
+        walletAddress,
+        claudeSessionId: trace.claudeSessionId,
+        fromNodeId,
+        fromLabel: 'ClaudeCodeSession',
+      }),
+    );
+  }
+  return operations;
+}
+
+/**
+ * POST graph ops to {apiUrl}/api/v1/write in batches of <=900, with Bearer auth
+ * plus S2D headers and skip_embedding. Throws on the first failed batch so the
+ * caller can queue the remaining payload.
+ */
+export async function writeGraph(
+  apiUrl: string,
+  apiKey: string,
+  deriveHeaders: DeriveHeaders,
+  operations: GraphOp[],
+  timeoutMs = 20000,
+): Promise<number> {
+  const base = apiUrl.replace(/\/$/, '');
+  const headers = { Authorization: `Bearer ${apiKey}`, ...deriveHeaders };
+  for (let offset = 0; offset < operations.length; offset += BATCH_SIZE) {
+    const batch = operations.slice(offset, offset + BATCH_SIZE);
+    const result = await postJson(`${base}/api/v1/write`, { operations: batch, skip_embedding: true }, headers, timeoutMs);
+    if (!result.ok) {
+      throw new Error(`write graph failed: ${result.status} ${result.text.slice(0, 500)}`);
+    }
+  }
+  return operations.length;
+}
+
+export function batchOperations(operations: GraphOp[]): GraphOp[][] {
+  const batches: GraphOp[][] = [];
+  for (let offset = 0; offset < operations.length; offset += BATCH_SIZE) {
+    batches.push(operations.slice(offset, offset + BATCH_SIZE));
+  }
+  return batches;
+}

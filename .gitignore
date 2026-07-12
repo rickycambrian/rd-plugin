@@ -1,0 +1,5 @@
+node_modules/
+*.log
+
+# dist/ is intentionally NOT ignored: the checked-in single-file ESM bundles are
+# the shipped executables (SPEC-000 D2 / invariant "one commit = one behavior").

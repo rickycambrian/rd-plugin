@@ -1,0 +1,26 @@
+{
+  "name": "rd-plugin",
+  "version": "0.1.0",
+  "description": "rickydata session tracking for Claude Code — wallet-scoped KFDB knowledge graph capture, local (direct) and remote TEE (gateway) sinks.",
+  "type": "module",
+  "private": true,
+  "license": "AGPL-3.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "verify-dist": "node scripts/verify-dist.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@noble/curves": "^1.9.1",
+    "@noble/hashes": "^1.4.0",
+    "@types/node": "^20.19.33",
+    "esbuild": "^0.23.0",
+    "rickydata": "file:../rickydata_SDK/packages/core",
+    "typescript": "^5.3.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,71 @@
+import type { ClaudeCodeHookTrace } from 'rickydata/kfdb';
+import type { PendingEvent } from './event.js';
+import type { TranscriptSummary } from './transcript.js';
+
+/** Stable agent id for Claude Code sessions in the execution graph. */
+export const RD_AGENT_ID = process.env.RD_KG_AGENT_ID || 'claude-code';
+
+/**
+ * Group a flat event stream into turns. A turn boundary starts at each
+ * UserPromptSubmit (mirrors the codex hook grouping): the prompt plus all
+ * following tool/stop events up to the next prompt form one turn.
+ */
+export function groupTurns(events: PendingEvent[]): PendingEvent[][] {
+  const groups: PendingEvent[][] = [];
+  let current: PendingEvent[] | null = null;
+  for (const event of events) {
+    // Open a new turn on the first event and at every UserPromptSubmit.
+    if (current === null || event.hookEventName === 'UserPromptSubmit') {
+      current = [];
+      groups.push(current);
+    }
+    current.push(event);
+  }
+  return groups.filter((g) => g.length > 0);
+}
+
+function firstDefined<T>(values: Array<T | undefined>): T | undefined {
+  for (const v of values) if (v !== undefined && v !== null && v !== '') return v;
+  return undefined;
+}
+
+export interface BuildTracesInput {
+  walletAddress: string;
+  claudeSessionId: string;
+  events: PendingEvent[];
+  summary?: TranscriptSummary;
+}
+
+/**
+ * Build one ClaudeCodeHookTrace per turn. Session-scoped enrichment
+ * (initial_prompt, files_changed, parent_session_id) is attached to every
+ * trace: the session node merges across turns, so identical values are
+ * idempotent, and any single flushed turn carries the full session context.
+ */
+export function buildTraces(input: BuildTracesInput): ClaudeCodeHookTrace[] {
+  const { walletAddress, claudeSessionId, events, summary } = input;
+  const groups = groupTurns(events);
+  const sessionModel = firstDefined([summary?.model, ...events.map((e) => e.model)]);
+  const sessionCwd = firstDefined([summary?.cwd, ...events.map((e) => e.cwd)]);
+
+  return groups.map((group, index) => {
+    const turnModel = firstDefined([...group.map((e) => e.model), sessionModel]);
+    const turnCwd = firstDefined([...group.map((e) => e.cwd), sessionCwd]);
+    const trace: ClaudeCodeHookTrace = {
+      walletAddress,
+      agentId: RD_AGENT_ID,
+      sessionId: claudeSessionId,
+      turnIndex: index + 1,
+      claudeSessionId,
+      model: turnModel,
+      cwd: turnCwd,
+      startedAt: group[0].receivedAt,
+      completedAt: group[group.length - 1].receivedAt,
+      events: group,
+    };
+    if (summary?.initialPrompt !== undefined) trace.initialPrompt = summary.initialPrompt;
+    if (summary?.filesChanged !== undefined) trace.filesChanged = summary.filesChanged;
+    if (summary?.parentSessionId !== undefined) trace.parentSessionId = summary.parentSessionId;
+    return trace;
+  });
+}

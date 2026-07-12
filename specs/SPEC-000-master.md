@@ -35,7 +35,7 @@ One unified Claude Code plugin (`rd-plugin@rickydata`) that tracks all sessions 
 
 ### Config — `~/.rickydata/config.json` (existing file; rd-plugin READS existing keys, may ADD new optional keys, never renames)
 - Existing keys used as-is: `api_url` (KFDB base, default `http://34.60.37.158`), `api_key` (Bearer), `private_key` (wallet key for S2D; wallet address is DERIVED from it, lowercase in all graph props), `track_messages`, `track_files`, `track_git`, `log_level`.
-- New optional keys (rd-plugin defaults if absent): `enabled` (bool, default `true` when `private_key` present), `excluded_directories` (string[], default `[]`), `sink` (`"direct" | "gateway" | "off"`, default auto).
+- New optional keys (rd-plugin defaults if absent): `enabled` (bool, default `true` — a pure kill-switch; the real no-config gate is sink resolution, since defaulting on `private_key` presence would break gateway sink where no local key exists), `excluded_directories` (string[], default `[]`), `sink` (`"direct" | "gateway" | "off"`, default auto). (Amended 2026-07-12, lead-acked WS-A deviation.)
 - Sink resolution order: env `RICKYDATA_KG_SINK` > config `sink` > auto (`direct` if config has `private_key`; `off` if no usable config **unless** `RICKYDATA_KG_SINK=gateway` is set, which requires no local config — the gateway is the authenticator).
 
 ### Env vars
@@ -83,7 +83,7 @@ One unified Claude Code plugin (`rd-plugin@rickydata`) that tracks all sessions 
 | WS | Owner | Status |
 |---|---|---|
 | C — SDK session-link helpers | `sdk-link` | **DONE** — rickydata_SDK main `177ac9d` + `237aa12` (sessionLinkNodeId, buildSessionLinkOperations, claudeCodeSessionNodeId, pass-through fields; 18 tests) |
-| A — plugin core | `plugin-core` | in progress (D1 validated) |
+| A — plugin core | `plugin-core` | **DONE (code)** — src (26 files) + 6 checked-in dist bundles + hooks.json + 52 tests; tsc/vitest/verify-dist/brand-gate/smoke all green, lead-reverified. SDK dep temporarily `file:../rickydata_SDK/packages/core`; repin to published `rickydata@1.11.0` (tag pushed) before the gate. |
 | B — gateway sink + remote injection | `gateway` | **DONE (code)** — mcp_deployments_registry branch `feat/rd-plugin-gateway-sink` @ `60515bf58` (tool-overlay extraction, runner injection gated on knowledgeGraphIngestion + `RD_PLUGIN_COMMIT` env, spool ingestor with forced authenticated wallet; 66 focused + 106 benchmark regression tests green). Inert until `RD_PLUGIN_COMMIT` set in container env. Merge + deploy pending gate. |
 | D — home + rickygit linking | `home-bridge` | **DONE** — rickydata_home main `752e81c` (bridge emits HarnessSessionKey + SAME_SESSION per chat session, wallet threaded via resolver; 121 sessions tests) + rickydata_git main `3d588db` (relay emits link ops for agent.session with authenticated wallet; 29 tests). Cross-impl pinned vector verified. Production SAME_SESSION in-degree proof deferred to final gate. |
 | E — migration + public onboarding | `docs-onboarding` | **E1 DONE** — rd-plugin `8dce165` (specs 001–007, docs, commands/skills, migrate-settings verified dry-run, e2e scripts, CI). E2 (apply migration) blocked on A. |
