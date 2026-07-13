@@ -3744,9 +3744,9 @@ async function drainQueue(auth, limit = 500, options = {}) {
     return result;
   }
   if (files.length === 0) return result;
-  const lockPath = path5.join(dir, ".drain.lock");
+  const lockPath2 = path5.join(dir, ".drain.lock");
   try {
-    const stat = fs6.statSync(lockPath);
+    const stat = fs6.statSync(lockPath2);
     if (Date.now() - stat.mtimeMs < DRAIN_LOCK_STALE_MS) {
       log("debug", "drain skipped: another drain holds the lock");
       result.remaining = files.length;
@@ -3755,7 +3755,7 @@ async function drainQueue(auth, limit = 500, options = {}) {
   } catch {
   }
   try {
-    fs6.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: (/* @__PURE__ */ new Date()).toISOString() }), { mode: 384 });
+    fs6.writeFileSync(lockPath2, JSON.stringify({ pid: process.pid, startedAt: (/* @__PURE__ */ new Date()).toISOString() }), { mode: 384 });
   } catch {
   }
   const startedAt = Date.now();
@@ -3812,6 +3812,10 @@ async function drainQueue(auth, limit = 500, options = {}) {
           fs6.rmSync(full, { force: true });
           result.sent += 1;
           sentHashes.add(contentHash);
+        } else if (response.status === 429) {
+          result.failed += 1;
+          log("info", "drain stopped: server rate-limited (429)", { attempted });
+          break;
         } else {
           result.failed += 1;
           failedHashes.add(contentHash);
@@ -3844,7 +3848,7 @@ async function drainQueue(auth, limit = 500, options = {}) {
     }
   } finally {
     try {
-      fs6.rmSync(lockPath, { force: true });
+      fs6.rmSync(lockPath2, { force: true });
     } catch {
     }
   }
@@ -4224,6 +4228,68 @@ function writeGatewayUnit(input) {
   return writeSpool(input.spoolDir, traces);
 }
 
+// src/lib/flush-lock.ts
+import fs7 from "node:fs";
+import path8 from "node:path";
+var FLUSH_LOCK_STALE_MS = 10 * 60 * 1e3;
+function lockPath(dir, sessionId) {
+  const safe = sessionId.replace(/[^A-Za-z0-9_.-]/g, "_");
+  return path8.join(dir, `${safe}.flush.lock`);
+}
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function holderIsLive(dir, sessionId) {
+  try {
+    const body = JSON.parse(fs7.readFileSync(lockPath(dir, sessionId), "utf8"));
+    const fresh = typeof body.startedAt === "number" && Date.now() - body.startedAt < FLUSH_LOCK_STALE_MS;
+    const alive = typeof body.pid === "number" && body.pid > 0 && pidAlive(body.pid);
+    return fresh && alive;
+  } catch {
+    return false;
+  }
+}
+function acquireFlushLock(dir, sessionId) {
+  const file = lockPath(dir, sessionId);
+  const body = JSON.stringify({ pid: process.pid, startedAt: Date.now() });
+  try {
+    fs7.mkdirSync(dir, { recursive: true });
+    fs7.writeFileSync(file, body, { flag: "wx", mode: 384 });
+    return true;
+  } catch {
+    if (holderIsLive(dir, sessionId)) return false;
+    try {
+      fs7.writeFileSync(file, body, { mode: 384 });
+    } catch {
+    }
+    return true;
+  }
+}
+async function acquireFlushLockOrWait(dir, sessionId, maxWaitMs = 2e4) {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    if (acquireFlushLock(dir, sessionId)) return;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  try {
+    fs7.writeFileSync(lockPath(dir, sessionId), JSON.stringify({ pid: process.pid, startedAt: Date.now() }), { mode: 384 });
+  } catch {
+  }
+}
+function releaseFlushLock(dir, sessionId) {
+  const file = lockPath(dir, sessionId);
+  try {
+    const body = JSON.parse(fs7.readFileSync(file, "utf8"));
+    if (body.pid === process.pid) fs7.rmSync(file, { force: true });
+  } catch {
+  }
+}
+
 // src/lib/cli-help.ts
 function wantsHelp(args) {
   return args.includes("--help") || args.includes("-h");
@@ -4260,23 +4326,33 @@ async function main() {
     return;
   }
   const claudeSessionId = events[0].claudeSessionId || sessionId;
-  const transcriptPath = resolveTranscriptPath(events, claudeSessionId);
-  const summary = transcriptPath ? parseTranscriptSummary(transcriptPath) : void 0;
-  const fingerprint = computeFingerprint(claudeSessionId, sink, events);
-  const state = readState();
-  const prior = flushedEntry(state, claudeSessionId);
-  if (prior.fingerprint === fingerprint && !final) {
-    log("debug", "flush skipped: unchanged fingerprint", { sessionId: claudeSessionId });
+  if (final) {
+    await acquireFlushLockOrWait(PENDING_DIR, claudeSessionId);
+  } else if (!acquireFlushLock(PENDING_DIR, claudeSessionId)) {
+    log("debug", "flush skipped: another flush in progress", { sessionId: claudeSessionId });
     return;
   }
-  if (sink === "gateway") {
-    await flushGateway(claudeSessionId, events, summary);
-  } else {
-    await flushDirect(config, claudeSessionId, events, summary, transcriptPath, prior, state);
+  try {
+    const transcriptPath = resolveTranscriptPath(events, claudeSessionId);
+    const summary = transcriptPath ? parseTranscriptSummary(transcriptPath) : void 0;
+    const fingerprint = computeFingerprint(claudeSessionId, sink, events);
+    const state = readState();
+    const prior = flushedEntry(state, claudeSessionId);
+    if (prior.fingerprint === fingerprint && !final) {
+      log("debug", "flush skipped: unchanged fingerprint", { sessionId: claudeSessionId });
+      return;
+    }
+    if (sink === "gateway") {
+      await flushGateway(claudeSessionId, events, summary);
+    } else {
+      await flushDirect(config, claudeSessionId, events, summary, transcriptPath, prior, state);
+    }
+    setFlushedEntry(state, claudeSessionId, { fingerprint });
+    writeState(state);
+    if (final) clearPending(claudeSessionId);
+  } finally {
+    releaseFlushLock(PENDING_DIR, claudeSessionId);
   }
-  setFlushedEntry(state, claudeSessionId, { fingerprint });
-  writeState(state);
-  if (final) clearPending(claudeSessionId);
 }
 function resolveTranscriptPath(events, claudeSessionId) {
   for (let i = events.length - 1; i >= 0; i--) {

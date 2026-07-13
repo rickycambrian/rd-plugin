@@ -7,6 +7,8 @@ import { parseTranscriptSummary, findTranscriptForSession, type TranscriptSummar
 import { getDeriveHeaders, addressFromPrivateKey, type DeriveHeaders } from './lib/derive.js';
 import { drainQueue } from './lib/queue.js';
 import { writeDirectUnit, writeGatewayUnit } from './lib/writer.js';
+import { acquireFlushLock, acquireFlushLockOrWait, releaseFlushLock } from './lib/flush-lock.js';
+import { PENDING_DIR } from './lib/paths.js';
 import { wantsHelp } from './lib/cli-help.js';
 
 const USAGE = `usage: node flush.mjs <sessionId> [--final]
@@ -51,28 +53,43 @@ async function main(): Promise<void> {
   }
 
   const claudeSessionId = events[0].claudeSessionId || sessionId;
-  const transcriptPath = resolveTranscriptPath(events, claudeSessionId);
-  const summary = transcriptPath ? parseTranscriptSummary(transcriptPath) : undefined;
 
-  const fingerprint = computeFingerprint(claudeSessionId, sink, events);
-  const state = readState();
-  const prior = flushedEntry(state, claudeSessionId);
-  if (prior.fingerprint === fingerprint && !final) {
-    log('debug', 'flush skipped: unchanged fingerprint', { sessionId: claudeSessionId });
+  // Single flusher per session: overlapping Stop-hook flushes re-send the same
+  // cumulative batches and amplify load when the backend is slow. Losers exit;
+  // the next Stop hook retries. A final flush waits instead of skipping.
+  if (final) {
+    await acquireFlushLockOrWait(PENDING_DIR, claudeSessionId);
+  } else if (!acquireFlushLock(PENDING_DIR, claudeSessionId)) {
+    log('debug', 'flush skipped: another flush in progress', { sessionId: claudeSessionId });
     return;
   }
 
-  if (sink === 'gateway') {
-    await flushGateway(claudeSessionId, events, summary);
-  } else {
-    await flushDirect(config, claudeSessionId, events, summary, transcriptPath, prior, state);
+  try {
+    const transcriptPath = resolveTranscriptPath(events, claudeSessionId);
+    const summary = transcriptPath ? parseTranscriptSummary(transcriptPath) : undefined;
+
+    const fingerprint = computeFingerprint(claudeSessionId, sink, events);
+    const state = readState();
+    const prior = flushedEntry(state, claudeSessionId);
+    if (prior.fingerprint === fingerprint && !final) {
+      log('debug', 'flush skipped: unchanged fingerprint', { sessionId: claudeSessionId });
+      return;
+    }
+
+    if (sink === 'gateway') {
+      await flushGateway(claudeSessionId, events, summary);
+    } else {
+      await flushDirect(config, claudeSessionId, events, summary, transcriptPath, prior, state);
+    }
+
+    setFlushedEntry(state, claudeSessionId, { fingerprint });
+    writeState(state);
+
+    // Only drop the pending log once the session has truly ended and been flushed.
+    if (final) clearPending(claudeSessionId);
+  } finally {
+    releaseFlushLock(PENDING_DIR, claudeSessionId);
   }
-
-  setFlushedEntry(state, claudeSessionId, { fingerprint });
-  writeState(state);
-
-  // Only drop the pending log once the session has truly ended and been flushed.
-  if (final) clearPending(claudeSessionId);
 }
 
 function resolveTranscriptPath(events: PendingEvent[], claudeSessionId: string): string | undefined {

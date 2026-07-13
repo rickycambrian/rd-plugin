@@ -3708,9 +3708,9 @@ async function drainQueue(auth, limit = 500, options = {}) {
     return result;
   }
   if (files.length === 0) return result;
-  const lockPath = path4.join(dir, ".drain.lock");
+  const lockPath2 = path4.join(dir, ".drain.lock");
   try {
-    const stat = fs4.statSync(lockPath);
+    const stat = fs4.statSync(lockPath2);
     if (Date.now() - stat.mtimeMs < DRAIN_LOCK_STALE_MS) {
       log("debug", "drain skipped: another drain holds the lock");
       result.remaining = files.length;
@@ -3719,7 +3719,7 @@ async function drainQueue(auth, limit = 500, options = {}) {
   } catch {
   }
   try {
-    fs4.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: (/* @__PURE__ */ new Date()).toISOString() }), { mode: 384 });
+    fs4.writeFileSync(lockPath2, JSON.stringify({ pid: process.pid, startedAt: (/* @__PURE__ */ new Date()).toISOString() }), { mode: 384 });
   } catch {
   }
   const startedAt = Date.now();
@@ -3776,6 +3776,10 @@ async function drainQueue(auth, limit = 500, options = {}) {
           fs4.rmSync(full, { force: true });
           result.sent += 1;
           sentHashes.add(contentHash);
+        } else if (response.status === 429) {
+          result.failed += 1;
+          log("info", "drain stopped: server rate-limited (429)", { attempted });
+          break;
         } else {
           result.failed += 1;
           failedHashes.add(contentHash);
@@ -3808,7 +3812,7 @@ async function drainQueue(auth, limit = 500, options = {}) {
     }
   } finally {
     try {
-      fs4.rmSync(lockPath, { force: true });
+      fs4.rmSync(lockPath2, { force: true });
     } catch {
     }
   }
@@ -3816,14 +3820,76 @@ async function drainQueue(auth, limit = 500, options = {}) {
   return result;
 }
 
-// src/codex/pending.ts
+// src/lib/flush-lock.ts
 import fs5 from "node:fs";
+import path5 from "node:path";
+var FLUSH_LOCK_STALE_MS = 10 * 60 * 1e3;
+function lockPath(dir, sessionId) {
+  const safe = sessionId.replace(/[^A-Za-z0-9_.-]/g, "_");
+  return path5.join(dir, `${safe}.flush.lock`);
+}
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function holderIsLive(dir, sessionId) {
+  try {
+    const body = JSON.parse(fs5.readFileSync(lockPath(dir, sessionId), "utf8"));
+    const fresh = typeof body.startedAt === "number" && Date.now() - body.startedAt < FLUSH_LOCK_STALE_MS;
+    const alive = typeof body.pid === "number" && body.pid > 0 && pidAlive(body.pid);
+    return fresh && alive;
+  } catch {
+    return false;
+  }
+}
+function acquireFlushLock(dir, sessionId) {
+  const file = lockPath(dir, sessionId);
+  const body = JSON.stringify({ pid: process.pid, startedAt: Date.now() });
+  try {
+    fs5.mkdirSync(dir, { recursive: true });
+    fs5.writeFileSync(file, body, { flag: "wx", mode: 384 });
+    return true;
+  } catch {
+    if (holderIsLive(dir, sessionId)) return false;
+    try {
+      fs5.writeFileSync(file, body, { mode: 384 });
+    } catch {
+    }
+    return true;
+  }
+}
+async function acquireFlushLockOrWait(dir, sessionId, maxWaitMs = 2e4) {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    if (acquireFlushLock(dir, sessionId)) return;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  try {
+    fs5.writeFileSync(lockPath(dir, sessionId), JSON.stringify({ pid: process.pid, startedAt: Date.now() }), { mode: 384 });
+  } catch {
+  }
+}
+function releaseFlushLock(dir, sessionId) {
+  const file = lockPath(dir, sessionId);
+  try {
+    const body = JSON.parse(fs5.readFileSync(file, "utf8"));
+    if (body.pid === process.pid) fs5.rmSync(file, { force: true });
+  } catch {
+  }
+}
+
+// src/codex/pending.ts
+import fs6 from "node:fs";
 
 // src/codex/paths.ts
-import path5 from "node:path";
-var CODEX_PENDING_DIR = path5.join(STATE_DIR, "codex-pending");
+import path6 from "node:path";
+var CODEX_PENDING_DIR = path6.join(STATE_DIR, "codex-pending");
 function codexPendingFileFor(codexSessionId) {
-  return path5.join(CODEX_PENDING_DIR, `${safeName(codexSessionId)}.jsonl`);
+  return path6.join(CODEX_PENDING_DIR, `${safeName(codexSessionId)}.jsonl`);
 }
 
 // src/codex/event.ts
@@ -3875,7 +3941,7 @@ function toTraceEvent(e) {
 function readCodexPending(codexSessionId) {
   let raw;
   try {
-    raw = fs5.readFileSync(codexPendingFileFor(codexSessionId), "utf8");
+    raw = fs6.readFileSync(codexPendingFileFor(codexSessionId), "utf8");
   } catch {
     return [];
   }
@@ -3889,7 +3955,7 @@ function readCodexPending(codexSessionId) {
 }
 function clearCodexPending(codexSessionId) {
   try {
-    fs5.rmSync(codexPendingFileFor(codexSessionId), { force: true });
+    fs6.rmSync(codexPendingFileFor(codexSessionId), { force: true });
   } catch {
   }
 }
@@ -3975,7 +4041,7 @@ function buildCodexGraphOperations(walletAddress, traces) {
 }
 
 // src/codex/spool.ts
-import path6 from "node:path";
+import path7 from "node:path";
 function codexSpoolFileName(codexSessionId, turnIndex, batchIndex = 0) {
   const safe = String(codexSessionId || "unknown").replace(/[^A-Za-z0-9_.-]/g, "_");
   const suffix = batchIndex > 0 ? `-b${batchIndex}` : "";
@@ -3989,7 +4055,7 @@ function writeCodexSpool(spoolDir, traces) {
     if (batches.length === 0) batches.push([]);
     batches.forEach((batch, batchIndex) => {
       const body = { ...trace, spoolVersion: 2, graphOperations: batch };
-      const filePath = path6.join(spoolDir, codexSpoolFileName(trace.codexSessionId, trace.turnIndex, batchIndex));
+      const filePath = path7.join(spoolDir, codexSpoolFileName(trace.codexSessionId, trace.turnIndex, batchIndex));
       writeFileAtomic(filePath, JSON.stringify(body));
       written.push(filePath);
     });
@@ -4056,21 +4122,31 @@ async function runCodexFlush(codexSessionId, opts, env = process.env) {
     log("debug", "codex flush skipped: no pending events", { sessionId: codexSessionId });
     return;
   }
-  const fingerprint = codexFingerprint(codexSessionId, sink, events);
-  const state = readState();
-  const prior = flushedEntry(state, codexSessionId);
-  if (prior.fingerprint === fingerprint && !opts.final) {
-    log("debug", "codex flush skipped: unchanged fingerprint", { sessionId: codexSessionId });
+  if (opts.final) {
+    await acquireFlushLockOrWait(CODEX_PENDING_DIR, codexSessionId);
+  } else if (!acquireFlushLock(CODEX_PENDING_DIR, codexSessionId)) {
+    log("debug", "codex flush skipped: another flush in progress", { sessionId: codexSessionId });
     return;
   }
-  if (sink === "gateway") {
-    flushCodexGateway(codexSessionId, events, env);
-  } else {
-    await flushCodexDirect(config, codexSessionId, events);
+  try {
+    const fingerprint = codexFingerprint(codexSessionId, sink, events);
+    const state = readState();
+    const prior = flushedEntry(state, codexSessionId);
+    if (prior.fingerprint === fingerprint && !opts.final) {
+      log("debug", "codex flush skipped: unchanged fingerprint", { sessionId: codexSessionId });
+      return;
+    }
+    if (sink === "gateway") {
+      flushCodexGateway(codexSessionId, events, env);
+    } else {
+      await flushCodexDirect(config, codexSessionId, events);
+    }
+    setFlushedEntry(state, codexSessionId, { fingerprint });
+    writeState(state);
+    if (opts.final) clearCodexPending(codexSessionId);
+  } finally {
+    releaseFlushLock(CODEX_PENDING_DIR, codexSessionId);
   }
-  setFlushedEntry(state, codexSessionId, { fingerprint });
-  writeState(state);
-  if (opts.final) clearCodexPending(codexSessionId);
 }
 function flushCodexGateway(codexSessionId, events, env) {
   const spoolDir = env.RD_SPOOL_DIR;

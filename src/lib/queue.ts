@@ -296,6 +296,13 @@ export async function drainQueue(auth: DrainAuth, limit = 500, options: DrainOpt
           fs.rmSync(full, { force: true });
           result.sent += 1;
           sentHashes.add(contentHash);
+        } else if (response.status === 429) {
+          // The server asked us to slow down — attempting further entries
+          // burns the shared rate budget for zero progress (and starves live
+          // flushes). Stop the whole drain; don't charge the entry an attempt.
+          result.failed += 1;
+          log('info', 'drain stopped: server rate-limited (429)', { attempted });
+          break;
         } else {
           result.failed += 1;
           failedHashes.add(contentHash);

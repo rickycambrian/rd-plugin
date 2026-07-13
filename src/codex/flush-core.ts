@@ -4,7 +4,9 @@ import { readState, writeState, flushedEntry, setFlushedEntry } from '../lib/sta
 import { sha256Hex } from '../lib/fsutil.js';
 import { getDeriveHeaders, addressFromPrivateKey, type DeriveHeaders } from '../lib/derive.js';
 import { drainQueue } from '../lib/queue.js';
+import { acquireFlushLock, acquireFlushLockOrWait, releaseFlushLock } from '../lib/flush-lock.js';
 import { readCodexPending, clearCodexPending } from './pending.js';
+import { CODEX_PENDING_DIR } from './paths.js';
 import type { CodexPendingEvent } from './event.js';
 import { RD_CODEX_AGENT_ID } from './config.js';
 import { writeCodexDirectUnit, writeCodexGatewayUnit } from './writer.js';
@@ -45,24 +47,36 @@ export async function runCodexFlush(
     return;
   }
 
-  const fingerprint = codexFingerprint(codexSessionId, sink, events);
-  const state = readState();
-  const prior = flushedEntry(state, codexSessionId);
-  if (prior.fingerprint === fingerprint && !opts.final) {
-    log('debug', 'codex flush skipped: unchanged fingerprint', { sessionId: codexSessionId });
+  // Single flusher per session (see lib/flush-lock.ts).
+  if (opts.final) {
+    await acquireFlushLockOrWait(CODEX_PENDING_DIR, codexSessionId);
+  } else if (!acquireFlushLock(CODEX_PENDING_DIR, codexSessionId)) {
+    log('debug', 'codex flush skipped: another flush in progress', { sessionId: codexSessionId });
     return;
   }
 
-  if (sink === 'gateway') {
-    flushCodexGateway(codexSessionId, events, env);
-  } else {
-    await flushCodexDirect(config, codexSessionId, events);
+  try {
+    const fingerprint = codexFingerprint(codexSessionId, sink, events);
+    const state = readState();
+    const prior = flushedEntry(state, codexSessionId);
+    if (prior.fingerprint === fingerprint && !opts.final) {
+      log('debug', 'codex flush skipped: unchanged fingerprint', { sessionId: codexSessionId });
+      return;
+    }
+
+    if (sink === 'gateway') {
+      flushCodexGateway(codexSessionId, events, env);
+    } else {
+      await flushCodexDirect(config, codexSessionId, events);
+    }
+
+    setFlushedEntry(state, codexSessionId, { fingerprint });
+    writeState(state);
+
+    if (opts.final) clearCodexPending(codexSessionId);
+  } finally {
+    releaseFlushLock(CODEX_PENDING_DIR, codexSessionId);
   }
-
-  setFlushedEntry(state, codexSessionId, { fingerprint });
-  writeState(state);
-
-  if (opts.final) clearCodexPending(codexSessionId);
 }
 
 function flushCodexGateway(codexSessionId: string, events: CodexPendingEvent[], env: NodeJS.ProcessEnv): void {

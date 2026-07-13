@@ -248,3 +248,16 @@ describe('pruneStaleFiles', () => {
     expect(pruneStaleFiles(path.join(os.tmpdir(), 'rd-prune-nope'), 1000)).toBe(0);
   });
 });
+
+describe('drainQueue rate limiting', () => {
+  it('stops the whole drain on a 429 without charging attempts', async () => {
+    enqueue({ url: 'http://x/w', body: { operations: [1] }, requiresBearer: true, requiresDerive: true }, dirs());
+    enqueue({ url: 'http://x/w', body: { operations: [2] }, requiresBearer: true, requiresDerive: true }, dirs());
+    postJsonMock.mockResolvedValue({ ok: false, status: 429, text: 'slow down', json: null });
+    const result = await drainQueue(AUTH, 500, dirs());
+    expect(postJsonMock).toHaveBeenCalledTimes(1);
+    expect(result.failed).toBe(1);
+    expect(queuedFiles()).toHaveLength(2);
+    for (const f of queuedFiles()) expect(readEntry(f).attempts).toBeUndefined();
+  });
+});

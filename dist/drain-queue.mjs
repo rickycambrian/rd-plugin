@@ -3278,6 +3278,10 @@ async function drainQueue(auth, limit = 500, options = {}) {
           fs4.rmSync(full, { force: true });
           result.sent += 1;
           sentHashes.add(contentHash);
+        } else if (response.status === 429) {
+          result.failed += 1;
+          log("info", "drain stopped: server rate-limited (429)", { attempted });
+          break;
         } else {
           result.failed += 1;
           failedHashes.add(contentHash);
