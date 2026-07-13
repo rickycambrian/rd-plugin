@@ -123,6 +123,20 @@ describe('drainQueue', () => {
     expect(fs.readdirSync(deadDir)).toHaveLength(1);
   });
 
+  it('treats 404 as transient (dependency ordering), not permanent', async () => {
+    // A track-message 404s until the post that creates its parent session
+    // record lands; at 3 attempts it must stay queued, not dead-letter.
+    enqueue({ url: 'http://x/w', body: { operations: [1] }, requiresBearer: true, requiresDerive: true }, dirs());
+    const file = queuedFiles()[0];
+    fs.writeFileSync(path.join(dir, file), JSON.stringify({ ...readEntry(file), attempts: 2 }));
+    postJsonMock.mockResolvedValue({ ok: false, status: 404, text: 'session not found', json: null });
+    const result = await drainQueue(AUTH, 500, dirs());
+    expect(result.deadLettered).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(queuedFiles()).toHaveLength(1);
+    expect(fs.readdirSync(deadDir)).toHaveLength(0);
+  });
+
   it('splits a timed-out operations batch into ordered halves', async () => {
     const operations = Array.from({ length: 120 }, (_, i) => ({ op: i }));
     enqueue({ url: 'http://x/w', body: { operations, skip_embedding: true }, requiresBearer: true, requiresDerive: true }, dirs());

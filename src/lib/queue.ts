@@ -129,7 +129,12 @@ export interface DrainOptions extends QueueDirs {
 }
 
 function classifyStatus(status: number): 'permanent' | 'transient' {
-  if (status >= 400 && status < 500 && status !== 408 && status !== 429) return 'permanent';
+  // 404 is NOT permanent for this queue: legacy track-* posts 404 until the
+  // post that creates their parent session record lands (observed live
+  // 2026-07-13 — a 404'd track-message replayed clean minutes later). Ordered
+  // oldest-first replay usually resolves it by the next drain; the transient
+  // attempt cap still bounds a true dead endpoint.
+  if (status >= 400 && status < 500 && status !== 404 && status !== 408 && status !== 429) return 'permanent';
   return 'transient';
 }
 

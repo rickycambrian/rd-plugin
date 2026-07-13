@@ -3664,7 +3664,7 @@ function enqueue(request, dirs = {}) {
   }
 }
 function classifyStatus(status) {
-  if (status >= 400 && status < 500 && status !== 408 && status !== 429) return "permanent";
+  if (status >= 400 && status < 500 && status !== 404 && status !== 408 && status !== 429) return "permanent";
   return "transient";
 }
 function backoffMs(attempts) {
