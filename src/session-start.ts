@@ -3,8 +3,14 @@ import { loadConfig, resolveSink, shouldTrack } from './lib/config.js';
 import { setLogLevel, log } from './lib/log.js';
 import { gatherContextPack } from './lib/context-pack.js';
 import { getDeriveHeaders, type DeriveHeaders } from './lib/derive.js';
+import { pruneStaleFiles } from './lib/fsutil.js';
+import { PENDING_DIR } from './lib/paths.js';
+import { CODEX_PENDING_DIR } from './codex/paths.js';
 import fs from 'node:fs';
 import path from 'node:path';
+
+/** Pending logs from sessions that died without a SessionEnd are GC'd here. */
+const PENDING_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * session-start — SessionStart hook. Fetches a KFDB context pack for the
@@ -19,6 +25,10 @@ async function main(): Promise<void> {
 
   const sink = resolveSink(config);
   if (sink === 'off' || !shouldTrack(config, input.cwd)) return;
+
+  // GC pending logs from long-dead sessions (no SessionEnd → never cleared).
+  const pruned = pruneStaleFiles(PENDING_DIR, PENDING_MAX_AGE_MS) + pruneStaleFiles(CODEX_PENDING_DIR, PENDING_MAX_AGE_MS);
+  if (pruned > 0) log('info', 'pruned stale pending logs', { pruned });
 
   const cwd = input.cwd || process.cwd();
   const workspace = path.basename(cwd) || cwd;

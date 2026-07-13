@@ -224,3 +224,27 @@ describe('drainQueue', () => {
     expect(queuedFiles()).toHaveLength(0);
   });
 });
+
+describe('pruneStaleFiles', () => {
+  it('removes only matching files older than the cutoff', async () => {
+    const { pruneStaleFiles } = await import('../src/lib/fsutil.js');
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-prune-'));
+    const oldFile = path.join(target, 'dead-session.jsonl');
+    const newFile = path.join(target, 'live-session.jsonl');
+    const other = path.join(target, 'state.json');
+    for (const f of [oldFile, newFile, other]) fs.writeFileSync(f, 'x');
+    const stale = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
+    fs.utimesSync(oldFile, stale, stale);
+    fs.utimesSync(other, stale, stale);
+    const removed = pruneStaleFiles(target, 30 * 24 * 60 * 60 * 1000);
+    expect(removed).toBe(1);
+    expect(fs.existsSync(oldFile)).toBe(false);
+    expect(fs.existsSync(newFile)).toBe(true);
+    expect(fs.existsSync(other)).toBe(true);
+  });
+
+  it('returns 0 for a missing directory', async () => {
+    const { pruneStaleFiles } = await import('../src/lib/fsutil.js');
+    expect(pruneStaleFiles(path.join(os.tmpdir(), 'rd-prune-nope'), 1000)).toBe(0);
+  });
+});

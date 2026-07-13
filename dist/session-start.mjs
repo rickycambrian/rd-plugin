@@ -2757,6 +2757,25 @@ function writeJsonFileAtomic(filePath, data) {
   fs3.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 384 });
   fs3.renameSync(tmp, filePath);
 }
+function pruneStaleFiles(dir, maxAgeMs, suffix = ".jsonl") {
+  let removed = 0;
+  try {
+    const cutoff = Date.now() - maxAgeMs;
+    for (const name of fs3.readdirSync(dir)) {
+      if (!name.endsWith(suffix)) continue;
+      const full = path3.join(dir, name);
+      try {
+        if (fs3.statSync(full).mtimeMs < cutoff) {
+          fs3.rmSync(full, { force: true });
+          removed += 1;
+        }
+      } catch {
+      }
+    }
+  } catch {
+  }
+  return removed;
+}
 
 // src/lib/derive.ts
 function hexToBytes2(hex) {
@@ -2943,17 +2962,24 @@ async function getDeriveHeaders(config) {
   };
 }
 
+// src/codex/paths.ts
+import path4 from "node:path";
+var CODEX_PENDING_DIR = path4.join(STATE_DIR, "codex-pending");
+
 // src/session-start.ts
 import fs4 from "node:fs";
-import path4 from "node:path";
+import path5 from "node:path";
+var PENDING_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
 async function main() {
   const input = await readHookInput();
   const config = loadConfig();
   setLogLevel(config.log_level);
   const sink = resolveSink(config);
   if (sink === "off" || !shouldTrack(config, input.cwd)) return;
+  const pruned = pruneStaleFiles(PENDING_DIR, PENDING_MAX_AGE_MS) + pruneStaleFiles(CODEX_PENDING_DIR, PENDING_MAX_AGE_MS);
+  if (pruned > 0) log("info", "pruned stale pending logs", { pruned });
   const cwd = input.cwd || process.cwd();
-  const workspace = path4.basename(cwd) || cwd;
+  const workspace = path5.basename(cwd) || cwd;
   const language = detectLanguage(cwd);
   const query = [workspace, language, "session start"].filter(Boolean).join(" ");
   let deriveHeaders;
@@ -2999,7 +3025,7 @@ var LANG_MARKERS = [
 function detectLanguage(cwd) {
   try {
     for (const marker of LANG_MARKERS) {
-      if (fs4.existsSync(path4.join(cwd, marker.file))) return marker.language;
+      if (fs4.existsSync(path5.join(cwd, marker.file))) return marker.language;
     }
   } catch {
   }
