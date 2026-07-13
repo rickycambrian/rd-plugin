@@ -38,22 +38,26 @@ export async function writeCodexDirectUnit(input: CodexDirectUnitInput): Promise
   const writeUrl = `${config.api_url.replace(/\/$/, '')}/api/v1/write`;
 
   let graphOk = true;
-  for (const batch of batchOperations(operations)) {
-    const body = { operations: batch, skip_embedding: true };
+  const batches = batchOperations(operations);
+  for (let i = 0; i < batches.length; i++) {
+    const body = { operations: batches[i], skip_embedding: true };
+    // Cumulative per session — keyed enqueue replaces the stale copy (see
+    // lib/writer.ts) instead of duplicating the batch on every failed flush.
+    const dedupeKey = `codex-graph:${codexSessionId}:${i}`;
     if (!deriveHeaders) {
-      enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
+      enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true, dedupeKey });
       graphOk = false;
       continue;
     }
     try {
       const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, GRAPH_WRITE_TIMEOUT_MS);
       if (!result.ok) {
-        enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
+        enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true, dedupeKey });
         graphOk = false;
         log('warn', 'codex graph batch failed; queued', { sessionId: codexSessionId, status: result.status });
       }
     } catch (err) {
-      enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
+      enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true, dedupeKey });
       graphOk = false;
       log('warn', 'codex graph batch error; queued', { sessionId: codexSessionId, error: (err as Error).message });
     }

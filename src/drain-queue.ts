@@ -4,13 +4,14 @@ import { getDeriveHeaders, type DeriveHeaders } from './lib/derive.js';
 import { drainQueue, queueSize } from './lib/queue.js';
 import { wantsHelp } from './lib/cli-help.js';
 
-const USAGE = `usage: node drain-queue.mjs [--batch=<n>] [--auto]
+const USAGE = `usage: node drain-queue.mjs [--batch=<n>] [--budget-min=<n>] [--auto]
 
 Replay the offline retry queue (re-derives S2D auth at send time).
 
-  --batch=<n>   max queued entries to send this run (default 500)
-  --auto        suppress the JSON result line (cron/opportunistic use)
-  -h, --help    show this help and exit
+  --batch=<n>       max queued entries to send this run (default 500)
+  --budget-min=<n>  wall-clock budget in minutes (default 30)
+  --auto            suppress the JSON result line (cron/opportunistic use)
+  -h, --help        show this help and exit
 `;
 
 /**
@@ -26,6 +27,8 @@ async function main(): Promise<void> {
   }
   const batchArg = args.find((a) => a.startsWith('--batch='));
   const limit = batchArg ? Math.max(1, parseInt(batchArg.split('=')[1], 10) || 500) : 500;
+  const budgetArg = args.find((a) => a.startsWith('--budget-min='));
+  const budgetMin = budgetArg ? Math.max(1, parseInt(budgetArg.split('=')[1], 10) || 30) : 30;
 
   const config = loadConfig();
   setLogLevel(config.log_level);
@@ -51,7 +54,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const result = await drainQueue({ apiKey, deriveHeaders }, limit);
+  const result = await drainQueue({ apiKey, deriveHeaders }, limit, { maxMs: budgetMin * 60_000 });
   log('info', 'drain complete', result as unknown as Record<string, unknown>);
   if (!args.includes('--auto')) {
     process.stdout.write(`${JSON.stringify(result)}\n`);

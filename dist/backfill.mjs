@@ -750,6 +750,7 @@ var STATE_DIR = path.join(DATA_DIR, "state", "rd-plugin");
 var STATE_FILE = path.join(STATE_DIR, "state.json");
 var PENDING_DIR = path.join(STATE_DIR, "pending");
 var QUEUE_DIR = path.join(DATA_DIR, "queue", "rd-plugin");
+var QUEUE_DEAD_DIR = path.join(DATA_DIR, "queue-failed", "rd-plugin");
 var LOG_FILE = path.join(DATA_DIR, "logs", "rd-plugin.log");
 
 // src/lib/config.ts
@@ -3657,12 +3658,49 @@ import path6 from "node:path";
 // src/lib/queue.ts
 import fs5 from "node:fs";
 import path5 from "node:path";
-function enqueue(request) {
+import { createHash as createHash6 } from "node:crypto";
+var BACKOFF_CAP_MS = 4 * 60 * 60 * 1e3;
+var DEFAULT_DRAIN_BUDGET_MS = 4 * 6e4;
+var DRAIN_LOCK_STALE_MS = 15 * 6e4;
+function hash16(input) {
+  return createHash6("sha256").update(input).digest("hex").slice(0, 16);
+}
+function contentHashOf(request) {
+  return hash16(`${request.url}
+${JSON.stringify(request.body)}`);
+}
+function enqueue(request, dirs = {}) {
+  const dir = dirs.dir ?? QUEUE_DIR;
   try {
-    fs5.mkdirSync(QUEUE_DIR, { recursive: true });
-    const name = `${Date.now()}-${Math.random().toString(36).slice(2)}.json`;
+    fs5.mkdirSync(dir, { recursive: true });
+    const contentHash = contentHashOf(request);
+    const keyHash = request.dedupeKey ? hash16(request.dedupeKey) : void 0;
+    let existing = [];
+    try {
+      existing = fs5.readdirSync(dir).filter((f) => f.endsWith(".json"));
+    } catch {
+    }
+    if (existing.some((f) => f.includes(`-c${contentHash}.json`))) {
+      log("debug", "enqueue skipped: identical entry already queued", { contentHash });
+      return;
+    }
+    if (keyHash) {
+      const superseded = existing.filter((f) => f.includes(`-k${keyHash}-`));
+      for (const f of superseded) {
+        try {
+          fs5.rmSync(path5.join(dir, f), { force: true });
+        } catch {
+        }
+      }
+      if (superseded.length > 0) {
+        log("debug", "enqueue superseded older entries", { dedupeKey: request.dedupeKey, replaced: superseded.length });
+      }
+    }
+    const rand = Math.random().toString(36).slice(2, 10);
+    const keySegment = keyHash ? `-k${keyHash}` : "";
+    const name = `${Date.now()}-${rand}${keySegment}-c${contentHash}.json`;
     const entry = { ...request, queuedAt: (/* @__PURE__ */ new Date()).toISOString() };
-    fs5.writeFileSync(path5.join(QUEUE_DIR, name), JSON.stringify(entry), { mode: 384 });
+    fs5.writeFileSync(path5.join(dir, name), JSON.stringify(entry), { mode: 384 });
   } catch (err) {
     log("warn", "enqueue failed", { error: err.message });
   }
@@ -3900,22 +3938,24 @@ async function writeDirectUnit(input) {
   const operations = buildGraphOperations(walletAddress, traces);
   const writeUrl = `${config.api_url.replace(/\/$/, "")}/api/v1/write`;
   let graphOk = true;
-  for (const batch of batchOperations(operations)) {
-    const body = { operations: batch, skip_embedding: true };
+  const batches = batchOperations(operations);
+  for (let i = 0; i < batches.length; i++) {
+    const body = { operations: batches[i], skip_embedding: true };
+    const dedupeKey = `graph:${claudeSessionId}:${i}`;
     if (!deriveHeaders) {
-      enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
+      enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true, dedupeKey });
       graphOk = false;
       continue;
     }
     try {
       const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, GRAPH_WRITE_TIMEOUT_MS);
       if (!result.ok) {
-        enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
+        enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true, dedupeKey });
         graphOk = false;
         log("warn", "graph batch failed; queued", { sessionId: claudeSessionId, status: result.status });
       }
     } catch (err) {
-      enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
+      enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true, dedupeKey });
       graphOk = false;
       log("warn", "graph batch error; queued", { sessionId: claudeSessionId, error: err.message });
     }

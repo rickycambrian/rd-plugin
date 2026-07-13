@@ -27,6 +27,9 @@ export const PENDING_DIR = path.join(STATE_DIR, 'pending');
 /** Offline retry queue. */
 export const QUEUE_DIR = path.join(DATA_DIR, 'queue', 'rd-plugin');
 
+/** Dead-letter directory for queue entries that exhausted their retries. */
+export const QUEUE_DEAD_DIR = path.join(DATA_DIR, 'queue-failed', 'rd-plugin');
+
 /** Plugin log file (respects config log_level). */
 export const LOG_FILE = path.join(DATA_DIR, 'logs', 'rd-plugin.log');
 

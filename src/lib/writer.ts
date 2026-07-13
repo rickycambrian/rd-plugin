@@ -50,22 +50,27 @@ export async function writeDirectUnit(input: DirectUnitInput): Promise<DirectUni
   const writeUrl = `${config.api_url.replace(/\/$/, '')}/api/v1/write`;
 
   let graphOk = true;
-  for (const batch of batchOperations(operations)) {
-    const body = { operations: batch, skip_embedding: true };
+  const batches = batchOperations(operations);
+  for (let i = 0; i < batches.length; i++) {
+    const body = { operations: batches[i], skip_embedding: true };
+    // Ops are cumulative per session, so batch i's content only ever grows
+    // between flushes — a keyed enqueue replaces the stale copy instead of
+    // stacking a duplicate every time a degraded server fails the same batch.
+    const dedupeKey = `graph:${claudeSessionId}:${i}`;
     if (!deriveHeaders) {
-      enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
+      enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true, dedupeKey });
       graphOk = false;
       continue;
     }
     try {
       const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, GRAPH_WRITE_TIMEOUT_MS);
       if (!result.ok) {
-        enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
+        enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true, dedupeKey });
         graphOk = false;
         log('warn', 'graph batch failed; queued', { sessionId: claudeSessionId, status: result.status });
       }
     } catch (err) {
-      enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
+      enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true, dedupeKey });
       graphOk = false;
       log('warn', 'graph batch error; queued', { sessionId: claudeSessionId, error: (err as Error).message });
     }

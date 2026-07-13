@@ -746,6 +746,7 @@ var STATE_DIR = path.join(DATA_DIR, "state", "rd-plugin");
 var STATE_FILE = path.join(STATE_DIR, "state.json");
 var PENDING_DIR = path.join(STATE_DIR, "pending");
 var QUEUE_DIR = path.join(DATA_DIR, "queue", "rd-plugin");
+var QUEUE_DEAD_DIR = path.join(DATA_DIR, "queue-failed", "rd-plugin");
 var LOG_FILE = path.join(DATA_DIR, "logs", "rd-plugin.log");
 function safeName(value3) {
   return String(value3 || "unknown").replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 200);
@@ -2902,6 +2903,7 @@ async function getDeriveHeaders(config) {
 // src/lib/queue.ts
 import fs4 from "node:fs";
 import path4 from "node:path";
+import { createHash as createHash6 } from "node:crypto";
 
 // src/lib/http.ts
 async function postJson(url, body, headers, timeoutMs = 15e3) {
@@ -3574,65 +3576,244 @@ function batchOperations(operations) {
 }
 
 // src/lib/queue.ts
-function enqueue(request) {
+var MAX_ATTEMPTS_TRANSIENT = 12;
+var MAX_ATTEMPTS_PERMANENT = 3;
+var BACKOFF_BASE_MS = 3e4;
+var BACKOFF_CAP_MS = 4 * 60 * 60 * 1e3;
+var SPLIT_MIN_OPS = 60;
+var DEFAULT_DRAIN_BUDGET_MS = 4 * 6e4;
+var DRAIN_LOCK_STALE_MS = 15 * 6e4;
+var HASH_RE = /-c([0-9a-f]{16})\.json$/;
+function hash16(input) {
+  return createHash6("sha256").update(input).digest("hex").slice(0, 16);
+}
+function contentHashOf(request) {
+  return hash16(`${request.url}
+${JSON.stringify(request.body)}`);
+}
+function enqueue(request, dirs = {}) {
+  const dir = dirs.dir ?? QUEUE_DIR;
   try {
-    fs4.mkdirSync(QUEUE_DIR, { recursive: true });
-    const name = `${Date.now()}-${Math.random().toString(36).slice(2)}.json`;
+    fs4.mkdirSync(dir, { recursive: true });
+    const contentHash = contentHashOf(request);
+    const keyHash = request.dedupeKey ? hash16(request.dedupeKey) : void 0;
+    let existing = [];
+    try {
+      existing = fs4.readdirSync(dir).filter((f) => f.endsWith(".json"));
+    } catch {
+    }
+    if (existing.some((f) => f.includes(`-c${contentHash}.json`))) {
+      log("debug", "enqueue skipped: identical entry already queued", { contentHash });
+      return;
+    }
+    if (keyHash) {
+      const superseded = existing.filter((f) => f.includes(`-k${keyHash}-`));
+      for (const f of superseded) {
+        try {
+          fs4.rmSync(path4.join(dir, f), { force: true });
+        } catch {
+        }
+      }
+      if (superseded.length > 0) {
+        log("debug", "enqueue superseded older entries", { dedupeKey: request.dedupeKey, replaced: superseded.length });
+      }
+    }
+    const rand = Math.random().toString(36).slice(2, 10);
+    const keySegment = keyHash ? `-k${keyHash}` : "";
+    const name = `${Date.now()}-${rand}${keySegment}-c${contentHash}.json`;
     const entry = { ...request, queuedAt: (/* @__PURE__ */ new Date()).toISOString() };
-    fs4.writeFileSync(path4.join(QUEUE_DIR, name), JSON.stringify(entry), { mode: 384 });
+    fs4.writeFileSync(path4.join(dir, name), JSON.stringify(entry), { mode: 384 });
   } catch (err) {
     log("warn", "enqueue failed", { error: err.message });
   }
 }
-async function drainQueue(auth, limit = 500) {
-  let sent = 0;
-  let failed = 0;
+function classifyStatus(status) {
+  if (status >= 400 && status < 500 && status !== 408 && status !== 429) return "permanent";
+  return "transient";
+}
+function backoffMs(attempts) {
+  const base = Math.min(BACKOFF_BASE_MS * 2 ** Math.max(0, attempts - 1), BACKOFF_CAP_MS);
+  return Math.round(base * (0.8 + Math.random() * 0.4));
+}
+function recordFailure(full, entry, error, kind, deadDir) {
+  const attempts = (entry.attempts ?? 0) + 1;
+  const maxAttempts = kind === "permanent" ? MAX_ATTEMPTS_PERMANENT : MAX_ATTEMPTS_TRANSIENT;
+  if (attempts >= maxAttempts) {
+    try {
+      fs4.mkdirSync(deadDir, { recursive: true });
+      fs4.renameSync(full, path4.join(deadDir, path4.basename(full)));
+      log("warn", "queue entry dead-lettered", { file: path4.basename(full), attempts, error: error.slice(0, 200) });
+      return "deadLettered";
+    } catch {
+    }
+  }
+  try {
+    const updated = {
+      ...entry,
+      attempts,
+      nextAttemptAt: new Date(Date.now() + backoffMs(attempts)).toISOString(),
+      lastError: error.slice(0, 300)
+    };
+    fs4.writeFileSync(full, JSON.stringify(updated), { mode: 384 });
+  } catch {
+  }
+  return "retained";
+}
+function splitEntry(dir, full, entry, operations) {
+  try {
+    const mid = Math.ceil(operations.length / 2);
+    const halves = [operations.slice(0, mid), operations.slice(mid)];
+    const tsPrefix = path4.basename(full).split("-")[0] || `${Date.now()}`;
+    const rand = Math.random().toString(36).slice(2, 10);
+    halves.forEach((ops, i) => {
+      const body = { ...entry.body, operations: ops };
+      const request = {
+        url: entry.url,
+        body,
+        requiresBearer: entry.requiresBearer,
+        requiresDerive: entry.requiresDerive,
+        queuedAt: entry.queuedAt,
+        // Halves keep the original's retry state but drop its dedupeKey: a
+        // later full-size enqueue for that key must not delete partial halves.
+        attempts: entry.attempts,
+        nextAttemptAt: new Date(Date.now() + BACKOFF_BASE_MS).toISOString(),
+        lastError: `split after timeout at ${operations.length} ops`
+      };
+      const name = `${tsPrefix}-${rand}${i}-c${contentHashOf(request)}.json`;
+      fs4.writeFileSync(path4.join(dir, name), JSON.stringify(request), { mode: 384 });
+    });
+    fs4.rmSync(full, { force: true });
+    return true;
+  } catch (err) {
+    log("warn", "queue split failed", { error: err.message });
+    return false;
+  }
+}
+function countQueue(dir) {
+  try {
+    return fs4.readdirSync(dir).filter((f) => f.endsWith(".json")).length;
+  } catch {
+    return 0;
+  }
+}
+async function drainQueue(auth, limit = 500, options = {}) {
+  const dir = options.dir ?? QUEUE_DIR;
+  const deadDir = options.deadDir ?? QUEUE_DEAD_DIR;
+  const maxMs = options.maxMs ?? DEFAULT_DRAIN_BUDGET_MS;
+  const result = { sent: 0, failed: 0, remaining: 0, deferred: 0, deduped: 0, deadLettered: 0, split: 0 };
   let files;
   try {
-    files = fs4.readdirSync(QUEUE_DIR).filter((f) => f.endsWith(".json"));
+    files = fs4.readdirSync(dir).filter((f) => f.endsWith(".json"));
   } catch {
-    return { sent: 0, failed: 0, remaining: 0 };
+    return result;
   }
-  files.sort();
-  const batch = files.slice(0, limit);
-  for (const file of batch) {
-    const full = path4.join(QUEUE_DIR, file);
-    let request;
-    try {
-      request = JSON.parse(fs4.readFileSync(full, "utf8"));
-    } catch {
-      try {
-        fs4.rmSync(full, { force: true });
-      } catch {
-      }
-      continue;
-    }
-    const headers = {};
-    if (request.requiresBearer && auth.apiKey) headers.Authorization = `Bearer ${auth.apiKey}`;
-    if (request.requiresDerive && auth.deriveHeaders) Object.assign(headers, auth.deriveHeaders);
-    if (request.requiresBearer && !auth.apiKey || request.requiresDerive && !auth.deriveHeaders) {
-      failed += 1;
-      continue;
-    }
-    try {
-      const result = await postJson(request.url, request.body, headers, GRAPH_WRITE_TIMEOUT_MS);
-      if (result.ok) {
-        fs4.rmSync(full, { force: true });
-        sent += 1;
-      } else {
-        failed += 1;
-      }
-    } catch {
-      failed += 1;
-    }
-  }
-  let remaining = 0;
+  if (files.length === 0) return result;
+  const lockPath = path4.join(dir, ".drain.lock");
   try {
-    remaining = fs4.readdirSync(QUEUE_DIR).filter((f) => f.endsWith(".json")).length;
+    const stat = fs4.statSync(lockPath);
+    if (Date.now() - stat.mtimeMs < DRAIN_LOCK_STALE_MS) {
+      log("debug", "drain skipped: another drain holds the lock");
+      result.remaining = files.length;
+      return result;
+    }
   } catch {
-    remaining = 0;
   }
-  return { sent, failed, remaining };
+  try {
+    fs4.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: (/* @__PURE__ */ new Date()).toISOString() }), { mode: 384 });
+  } catch {
+  }
+  const startedAt = Date.now();
+  const sentHashes = /* @__PURE__ */ new Set();
+  const failedHashes = /* @__PURE__ */ new Set();
+  try {
+    files.sort();
+    let attempted = 0;
+    for (const file of files) {
+      if (attempted >= limit) break;
+      if (Date.now() - startedAt > maxMs) {
+        log("info", "drain budget exhausted", { attempted, budgetMs: maxMs });
+        break;
+      }
+      const full = path4.join(dir, file);
+      let entry;
+      try {
+        entry = JSON.parse(fs4.readFileSync(full, "utf8"));
+      } catch {
+        try {
+          fs4.rmSync(full, { force: true });
+        } catch {
+        }
+        continue;
+      }
+      if (entry.nextAttemptAt && Date.parse(entry.nextAttemptAt) > Date.now()) {
+        result.deferred += 1;
+        continue;
+      }
+      const contentHash = HASH_RE.exec(file)?.[1] ?? contentHashOf(entry);
+      if (sentHashes.has(contentHash)) {
+        try {
+          fs4.rmSync(full, { force: true });
+        } catch {
+        }
+        result.deduped += 1;
+        continue;
+      }
+      if (failedHashes.has(contentHash)) {
+        result.deferred += 1;
+        continue;
+      }
+      const headers = {};
+      if (entry.requiresBearer && auth.apiKey) headers.Authorization = `Bearer ${auth.apiKey}`;
+      if (entry.requiresDerive && auth.deriveHeaders) Object.assign(headers, auth.deriveHeaders);
+      if (entry.requiresBearer && !auth.apiKey || entry.requiresDerive && !auth.deriveHeaders) {
+        result.failed += 1;
+        continue;
+      }
+      attempted += 1;
+      try {
+        const response = await postJson(entry.url, entry.body, headers, GRAPH_WRITE_TIMEOUT_MS);
+        if (response.ok) {
+          fs4.rmSync(full, { force: true });
+          result.sent += 1;
+          sentHashes.add(contentHash);
+        } else {
+          result.failed += 1;
+          failedHashes.add(contentHash);
+          const outcome = recordFailure(
+            full,
+            entry,
+            `HTTP ${response.status}: ${response.text.slice(0, 200)}`,
+            classifyStatus(response.status),
+            deadDir
+          );
+          if (outcome === "deadLettered") result.deadLettered += 1;
+        }
+      } catch (err) {
+        const error = err;
+        result.failed += 1;
+        failedHashes.add(contentHash);
+        const isTimeout = error.name === "AbortError" || error.name === "TimeoutError";
+        const body = entry.body;
+        const operations = body && Array.isArray(body.operations) ? body.operations : void 0;
+        if (isTimeout && operations && operations.length >= SPLIT_MIN_OPS) {
+          if (splitEntry(dir, full, entry, operations)) {
+            result.split += 1;
+            log("info", "queue entry split after timeout", { file, ops: operations.length });
+            continue;
+          }
+        }
+        const outcome = recordFailure(full, entry, error.message || String(error), "transient", deadDir);
+        if (outcome === "deadLettered") result.deadLettered += 1;
+      }
+    }
+  } finally {
+    try {
+      fs4.rmSync(lockPath, { force: true });
+    } catch {
+    }
+  }
+  result.remaining = countQueue(dir);
+  return result;
 }
 
 // src/codex/pending.ts
@@ -3823,22 +4004,24 @@ async function writeCodexDirectUnit(input) {
   const operations = buildCodexGraphOperations(walletAddress, traces);
   const writeUrl = `${config.api_url.replace(/\/$/, "")}/api/v1/write`;
   let graphOk = true;
-  for (const batch of batchOperations(operations)) {
-    const body = { operations: batch, skip_embedding: true };
+  const batches = batchOperations(operations);
+  for (let i = 0; i < batches.length; i++) {
+    const body = { operations: batches[i], skip_embedding: true };
+    const dedupeKey = `codex-graph:${codexSessionId}:${i}`;
     if (!deriveHeaders) {
-      enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
+      enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true, dedupeKey });
       graphOk = false;
       continue;
     }
     try {
       const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, GRAPH_WRITE_TIMEOUT_MS);
       if (!result.ok) {
-        enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
+        enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true, dedupeKey });
         graphOk = false;
         log("warn", "codex graph batch failed; queued", { sessionId: codexSessionId, status: result.status });
       }
     } catch (err) {
-      enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true });
+      enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true, dedupeKey });
       graphOk = false;
       log("warn", "codex graph batch error; queued", { sessionId: codexSessionId, error: err.message });
     }

@@ -68,6 +68,7 @@ var STATE_DIR = path.join(DATA_DIR, "state", "rd-plugin");
 var STATE_FILE = path.join(STATE_DIR, "state.json");
 var PENDING_DIR = path.join(STATE_DIR, "pending");
 var QUEUE_DIR = path.join(DATA_DIR, "queue", "rd-plugin");
+var QUEUE_DEAD_DIR = path.join(DATA_DIR, "queue-failed", "rd-plugin");
 var LOG_FILE = path.join(DATA_DIR, "logs", "rd-plugin.log");
 function pendingFileFor(claudeSessionId) {
   return path.join(PENDING_DIR, `${safeName(claudeSessionId)}.jsonl`);
