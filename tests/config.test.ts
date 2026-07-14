@@ -4,6 +4,7 @@ import { resolveSink, shouldTrack, type RdConfig } from '../src/lib/config.js';
 function makeConfig(overrides: Partial<RdConfig> = {}): RdConfig {
   return {
     api_url: 'http://localhost',
+    home_url: 'http://home.local',
     api_key: undefined,
     private_key: undefined,
     enabled: true,

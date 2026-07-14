@@ -2,11 +2,13 @@ import fs from 'node:fs';
 import { CONFIG_FILE } from './paths.js';
 
 export const DEFAULT_API_URL = 'http://34.60.37.158';
+export const DEFAULT_HOME_URL = 'https://rickydata-home-2dbp4scmrq-uc.a.run.app';
 
 export type Sink = 'direct' | 'gateway' | 'off';
 
 export interface RdConfig {
   api_url: string;
+  home_url: string;
   api_key?: string;
   private_key?: string;
   enabled: boolean;
@@ -50,9 +52,14 @@ export function loadConfig(): RdConfig {
     process.env.RICKYDATA_API_URL ||
     (typeof raw.api_url === 'string' && raw.api_url) ||
     DEFAULT_API_URL;
+  const home_url =
+    process.env.RICKYDATA_HOME_URL ||
+    (typeof raw.home_url === 'string' && raw.home_url) ||
+    DEFAULT_HOME_URL;
 
   return {
     api_url,
+    home_url,
     api_key: typeof raw.api_key === 'string' ? raw.api_key : undefined,
     private_key,
     // `enabled` is the user kill-switch and defaults on. The "do nothing when

@@ -42,6 +42,7 @@ node ~/.claude/plugins/rd-plugin/dist/setup.mjs private_key=0x... api_key=... --
 | Key | Type | Default | Purpose |
 |---|---|---|---|
 | `api_url` | string | `http://34.60.37.158` | KFDB base URL. Override per-run with `RICKYDATA_API_URL`. |
+| `home_url` | string | `https://rickydata-home-2dbp4scmrq-uc.a.run.app` | rickydata_home base URL used for the authenticated SessionStart context pack. Override per-run with `RICKYDATA_HOME_URL`. |
 | `api_key` | string | — | Bearer token for KFDB. |
 | `private_key` | string (64 hex) | — | Wallet key used for sign-to-derive. Your wallet address is derived from it; it is never sent anywhere. |
 | `track_messages` | bool | `true` | Capture prompts/turns. |
@@ -58,6 +59,7 @@ A minimal local config looks like this (placeholders — use your own values):
 ```json
 {
   "api_url": "http://34.60.37.158",
+  "home_url": "https://rickydata-home-2dbp4scmrq-uc.a.run.app",
   "api_key": "<YOUR_KFDB_API_KEY>",
   "private_key": "<YOUR_64_HEX_WALLET_KEY>",
   "track_messages": true,
@@ -68,6 +70,22 @@ A minimal local config looks like this (placeholders — use your own values):
 ```
 
 > Never commit this file or paste real keys into chats, issues, or logs. Set it to `0600` permissions (`/rd-setup` does this for you).
+
+### SessionStart knowledge context
+
+When `private_key` is configured, the SessionStart hook mints a short-lived,
+Home-branded wallet token locally and requests
+`/api/context-pack?repo=<workspace>&budget=24000&consumer=plugin`. The private
+key is never sent. The injected pack includes every selected section plus its
+selected/omitted manifests, source failures, coverage status, and
+reproducibility hash. Home is preferred because it compiles the connected wiki,
+knowledge graph, Mission Control, verification, and human-decision context.
+
+If Home cannot return a valid `context-pack/v1` within the hook's five-second
+budget, rd-plugin falls back to its bounded answer-sheet retrieval. That block
+is explicitly marked `CONTEXT COVERAGE — INCOMPLETE`; an empty fallback says so
+instead of silently injecting nothing. Set `RICKYDATA_HOME_URL` (or `home_url`)
+to point at another Home deployment.
 
 ## 4. Choosing a sink
 

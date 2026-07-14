@@ -31,6 +31,15 @@ Once connected, ask Claude about your own history:
 
 Everything is scoped to your wallet. Your graph is yours.
 
+At `SessionStart`, the same wallet also authenticates a read-only request to
+rickydata_home's compiled context-pack endpoint. Claude receives the complete
+budgeted pack for the current repository: invariants, verification gates,
+in-progress work, wiki claims and sources, lessons, prior human decisions,
+known traps, open questions, the exact selected-item manifest, exclusions, and
+source-health status. The injected block carries a reproducibility hash. If Home
+is unavailable, the plugin labels its smaller answer-sheet fallback
+`INCOMPLETE`; it never presents fallback context as complete.
+
 ## How it works
 
 rd-plugin captures in two stages so it never slows you down:

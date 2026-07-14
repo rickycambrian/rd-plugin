@@ -750,6 +750,7 @@ var LOG_FILE = path.join(DATA_DIR, "logs", "rd-plugin.log");
 
 // src/lib/config.ts
 var DEFAULT_API_URL = "http://34.60.37.158";
+var DEFAULT_HOME_URL = "https://rickydata-home-2dbp4scmrq-uc.a.run.app";
 function readRawConfig() {
   try {
     const parsed = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
@@ -768,8 +769,10 @@ function loadConfig() {
   const raw = readRawConfig();
   const private_key = typeof raw.private_key === "string" ? raw.private_key : void 0;
   const api_url = process.env.RICKYDATA_API_URL || typeof raw.api_url === "string" && raw.api_url || DEFAULT_API_URL;
+  const home_url = process.env.RICKYDATA_HOME_URL || typeof raw.home_url === "string" && raw.home_url || DEFAULT_HOME_URL;
   return {
     api_url,
+    home_url,
     api_key: typeof raw.api_key === "string" ? raw.api_key : void 0,
     private_key,
     // `enabled` is the user kill-switch and defaults on. The "do nothing when

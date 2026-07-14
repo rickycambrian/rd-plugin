@@ -3,10 +3,12 @@ import { loadConfig, resolveSink, shouldTrack } from './lib/config.js';
 import { setLogLevel, log } from './lib/log.js';
 import { gatherContextPack } from './lib/context-pack.js';
 import { getDeriveHeaders, type DeriveHeaders } from './lib/derive.js';
+import { mintHomeWalletToken } from './lib/home-auth.js';
 import { pruneStaleFiles } from './lib/fsutil.js';
 import { PENDING_DIR } from './lib/paths.js';
 import { CODEX_PENDING_DIR } from './codex/paths.js';
 import { recoverQuietPendingLogs } from './lib/recover.js';
+import { writeAll } from './lib/stdout.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,8 +19,9 @@ const PENDING_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 /**
  * session-start — SessionStart hook. Fetches a KFDB context pack for the
  * workspace and injects it via the SessionStart `additionalContext` channel.
- * Strictly fail-open with a hard 5s budget: on any failure it prints nothing
- * and exits 0. Never emits when the sink is off or the dir is excluded.
+ * Strictly fail-open with a bounded 8.5s context budget: on any failure it
+ * emits only an explicitly-INCOMPLETE fallback and exits 0. The wider bound is
+ * live-earned from a cold complete Home compile; warm SWR reads remain fast.
  */
 async function main(): Promise<void> {
   const input = await readHookInput();
@@ -47,9 +50,13 @@ async function main(): Promise<void> {
   // S2D headers when we can authenticate (preference/decision sheets are
   // wallet-scoped); public matches still work without them.
   let deriveHeaders: DeriveHeaders | undefined;
+  let homeToken: string | undefined;
   if (config.private_key) {
     try {
-      deriveHeaders = await getDeriveHeaders({ apiUrl: config.api_url, apiKey: config.api_key ?? '', privateKey: config.private_key });
+      [deriveHeaders, homeToken] = await Promise.all([
+        getDeriveHeaders({ apiUrl: config.api_url, apiKey: config.api_key ?? '', privateKey: config.private_key }),
+        mintHomeWalletToken(config.private_key),
+      ]);
     } catch (err) {
       log('debug', 'session-start derive failed (fail-open)', { error: (err as Error).message });
     }
@@ -61,24 +68,33 @@ async function main(): Promise<void> {
     deriveHeaders,
     query,
     context: language ? { language } : {},
-    timeoutMs: 5000,
+    timeoutMs: 8500,
+    homeUrl: config.home_url,
+    homeToken,
+    repoId: workspace,
   });
 
   if (pack.text) {
-    emitContext(pack.text);
-    log('info', 'session-start injected', { sheetIds: pack.sheetIds.length, workspace });
+    await emitContext(pack.text);
+    log('info', 'session-start injected', {
+      sheetIds: pack.sheetIds.length,
+      workspace,
+      contextSource: pack.source,
+      coverageStatus: pack.coverageStatus,
+      reproducibilityHash: pack.reproducibilityHash,
+    });
   }
 }
 
 /** Emit the SessionStart additionalContext JSON envelope on stdout. */
-function emitContext(text: string): void {
+async function emitContext(text: string): Promise<void> {
   const payload = {
     hookSpecificOutput: {
       hookEventName: 'SessionStart',
       additionalContext: text,
     },
   };
-  process.stdout.write(JSON.stringify(payload));
+  await writeAll(process.stdout, JSON.stringify(payload));
 }
 
 const LANG_MARKERS: Array<{ file: string; language: string }> = [
@@ -107,4 +123,8 @@ main()
   .catch((err) => {
     try { log('debug', 'session-start failed', { error: (err as Error).message }); } catch { /* ignore */ }
   })
-  .finally(() => process.exit(0));
+  .finally(() => {
+    // A complete Home pack is tens of kilobytes. Forced exit truncated stdout
+    // mid-JSON on a real SessionStart; a natural exit preserves the flush above.
+    process.exitCode = 0;
+  });

@@ -34,6 +34,7 @@ var LOG_FILE = path.join(DATA_DIR, "logs", "rd-plugin.log");
 
 // src/lib/config.ts
 var DEFAULT_API_URL = "http://34.60.37.158";
+var DEFAULT_HOME_URL = "https://rickydata-home-2dbp4scmrq-uc.a.run.app";
 function readRawConfig() {
   try {
     const parsed = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
@@ -52,8 +53,10 @@ function loadConfig() {
   const raw = readRawConfig();
   const private_key = typeof raw.private_key === "string" ? raw.private_key : void 0;
   const api_url = process.env.RICKYDATA_API_URL || typeof raw.api_url === "string" && raw.api_url || DEFAULT_API_URL;
+  const home_url = process.env.RICKYDATA_HOME_URL || typeof raw.home_url === "string" && raw.home_url || DEFAULT_HOME_URL;
   return {
     api_url,
+    home_url,
     api_key: typeof raw.api_key === "string" ? raw.api_key : void 0,
     private_key,
     // `enabled` is the user kill-switch and defaults on. The "do nothing when
@@ -139,6 +142,67 @@ async function postJson(url, body, headers2, timeoutMs = 15e3) {
 
 // src/lib/context-pack.ts
 var DEFAULT_MAX_CHARS = 4e3;
+function homeCoverageStatus(pack) {
+  const status = pack.coverage?.status;
+  return status === "complete" || status === "bounded" || status === "incomplete" ? status : "incomplete";
+}
+function renderHomePack(pack) {
+  const status = homeCoverageStatus(pack);
+  const anchor = pack.anchor ?? {};
+  const anchorKey = anchor.surface ?? anchor.taskSlug ?? anchor.repoId ?? anchor.lesson ?? "unknown";
+  const lines = [
+    `## RickyData compiled context \u2014 ${anchor.kind ?? "unknown"}:${anchorKey}`,
+    `[CONTEXT COVERAGE \u2014 ${status.toUpperCase()}]`,
+    `Reproducibility hash: ${pack.reproducibility_hash ?? "unavailable"}; token estimate: ${pack.token_estimate ?? "unavailable"}`
+  ];
+  if (pack.brief?.trim()) lines.push("", pack.brief.trim());
+  const failed = (pack.coverage?.sources ?? []).filter((source) => source.status === "error");
+  if (!pack.coverage) lines.push("- SOURCE FAILED: context_pack_coverage \u2014 legacy pack omitted source-health metadata");
+  for (const source of failed) lines.push(`- SOURCE FAILED: ${source.source ?? "unknown"} \u2014 ${source.reason ?? "unknown error"}`);
+  const section = (title, values) => {
+    if (values.length > 0) lines.push("", `${title}:`, ...values.map((value) => `- ${value}`));
+  };
+  section("Invariants", (pack.invariants ?? []).map((row) => `${row.text ?? ""} [${row.source_ref ?? "source unavailable"}]`));
+  section("Verification gates", (pack.verification ?? []).map((row) => `${row.kind ?? "gate"}: ${row.status ?? "unknown"}${row.evidence_ref ? ` [${row.evidence_ref}]` : ""}`));
+  section("Work in progress", (pack.work_in_progress ?? []).map((row) => {
+    const refs = [row.issue_ref, row.issue_state, ...row.linked_prs ?? [], row.session_artifacts !== void 0 ? `${row.session_artifacts} session artifact(s)` : void 0].filter(Boolean);
+    return `${row.name ?? row.slug ?? "unnamed"} [${row.slug ?? "unknown"}]${refs.length ? ` \u2014 ${refs.join("; ")}` : ""}`;
+  }));
+  section("Knowledge (wiki)", (pack.wiki ?? []).flatMap((row) => [
+    `${row.title ?? row.slug ?? "untitled"}${row.status === "stale" ? " (STALE)" : ""}: ${row.summary ?? ""} [wiki:${row.slug ?? "unknown"}]`,
+    ...(row.key_claims ?? []).map((claim) => `  ${claim.text ?? ""} [${claim.source_ref ?? "source unavailable"}; ${claim.confidence_tier ?? "unknown"}]`)
+  ]));
+  section("Lessons", (pack.lessons ?? []).map((row) => `${(row.text ?? "").replace(/\n+/g, " ")} [${row.source_ref ?? "source unavailable"}; confidence ${row.confidence ?? "unknown"}]`));
+  section("Recent human decisions", (pack.decisions ?? []).map((row) => `${row.title ?? "untitled"} (${row.action ?? "unknown"}, ${row.decided_at ?? "date unavailable"}) [${row.source_ref_id ?? "source unavailable"}]`));
+  section("Known traps", (pack.traps ?? []).map((row) => `${row.name ?? "unnamed"}: ${row.hook ?? ""}`));
+  section("Open questions", (pack.open_questions ?? []).map((row) => `${row.question ?? ""} [${row.id ?? "id unavailable"}]`));
+  section("Selected context manifest", (pack.selected_items ?? []).map((row) => `${row.section ?? "unknown"}:${row.id ?? "unknown"} sha256=${row.content_hash ?? "unavailable"} tokens=${row.token_estimate ?? "unknown"}${row.rank_reason ? ` rank=${row.rank_reason}` : ""}`));
+  section("Context exclusions", [
+    ...(pack.omitted ?? []).map((row) => `${row.count ?? 0} ${row.section ?? "unknown"} item(s): ${row.reason ?? "unknown"}`),
+    ...(pack.omitted_items ?? []).map((row) => `${row.section ?? "unknown"}:${row.id ?? "unknown"}: ${row.reason ?? "unknown"}`)
+  ]);
+  return lines.join("\n");
+}
+async function fetchHomePack(input) {
+  if (!input.homeUrl || !input.homeToken || !input.repoId) return null;
+  const params = new URLSearchParams({ repo: input.repoId, budget: "24000", consumer: "plugin" });
+  const controller = new AbortController();
+  const timeoutMs = Math.max(500, Math.min(input.timeoutMs ?? 8500, 7500));
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${input.homeUrl.replace(/\/$/, "")}/api/context-pack?${params}`, {
+      headers: { Accept: "application/json", Authorization: `Bearer ${input.homeToken}` },
+      signal: controller.signal
+    });
+    if (!res.ok) return null;
+    const pack = await res.json();
+    return pack.version === "context-pack/v1" ? pack : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 function headers(apiKey, derive) {
   const h = { Accept: "application/json" };
   if (apiKey) h.Authorization = `Bearer ${apiKey}`;
@@ -184,11 +248,23 @@ function formatLine(sheet) {
   return `- ${title || summary}`;
 }
 async function gatherContextPack(input) {
+  const triedHome = Boolean(input.homeUrl && input.homeToken && input.repoId);
+  const homePack = await fetchHomePack(input);
+  if (homePack) {
+    return {
+      text: renderHomePack(homePack),
+      sheetIds: [],
+      source: "home",
+      coverageStatus: homeCoverageStatus(homePack),
+      ...homePack.reproducibility_hash ? { reproducibilityHash: homePack.reproducibility_hash } : {}
+    };
+  }
   const maxChars = input.maxChars ?? DEFAULT_MAX_CHARS;
+  const fallbackInput = triedHome ? { ...input, timeoutMs: Math.min(input.timeoutMs ?? 5e3, 700) } : input;
   const [matches, prefs, decisions] = await Promise.all([
-    matchSheets(input).catch(() => []),
-    listByCategory(input, "user_preference", 8).catch(() => []),
-    listByCategory(input, "project_decision", 5).catch(() => [])
+    matchSheets(fallbackInput).catch(() => []),
+    listByCategory(fallbackInput, "user_preference", 8).catch(() => []),
+    listByCategory(fallbackInput, "project_decision", 5).catch(() => [])
   ]);
   const seen = /* @__PURE__ */ new Set();
   const sheetIds = [];
@@ -208,9 +284,12 @@ async function gatherContextPack(input) {
     used += line.length + 1;
     if (id) sheetIds.push(id);
   }
-  if (lines.length === 0) return { text: "", sheetIds: [] };
+  if (lines.length === 0) {
+    return triedHome ? { text: "## RickyData context\n[CONTEXT COVERAGE \u2014 INCOMPLETE]\n- Home compiled context pack unavailable; no answer-sheet fallback matched.", sheetIds: [], source: "empty", coverageStatus: "incomplete" } : { text: "", sheetIds: [], source: "empty", coverageStatus: "incomplete" };
+  }
+  const warning = triedHome ? "[CONTEXT COVERAGE \u2014 INCOMPLETE]\n- Home compiled context pack unavailable; answer-sheet fallback only.\n" : "";
   return { text: `## ${heading}
-${lines.join("\n")}`, sheetIds };
+${warning}${lines.join("\n")}`, sheetIds, source: "answer-sheets-fallback", coverageStatus: "incomplete" };
 }
 
 // src/lib/derive.ts
@@ -2962,6 +3041,46 @@ async function getDeriveHeaders(config) {
   };
 }
 
+// src/lib/home-auth.ts
+var HOME_AUTH_BRAND = "rickydata-home wallet auth";
+var DEFAULT_TTL_SECONDS = 24 * 60 * 60;
+var MAX_TTL_SECONDS = 48 * 60 * 60;
+function privateKeyBytes(privateKey) {
+  const hex = privateKey.startsWith("0x") ? privateKey.slice(2) : privateKey;
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new Error("Invalid private key: expected 64 hex chars");
+  return Uint8Array.from(Buffer.from(hex, "hex"));
+}
+function buildHomeAuthMessage(claims) {
+  return [
+    HOME_AUTH_BRAND,
+    `address: ${claims.address.toLowerCase()}`,
+    `issuedAt: ${claims.issuedAt}`,
+    `expiresAt: ${claims.expiresAt}`
+  ].join("\n");
+}
+function signPersonalMessage(privateKey, message) {
+  const body = new TextEncoder().encode(message);
+  const prefix = new TextEncoder().encode(`Ethereum Signed Message:
+${body.length}`);
+  const framed = new Uint8Array(prefix.length + body.length);
+  framed.set(prefix);
+  framed.set(body, prefix.length);
+  const signature = secp256k1.sign(keccak_256(framed), privateKeyBytes(privateKey));
+  const compact = signature.toCompactRawBytes();
+  const out = new Uint8Array(65);
+  out.set(compact);
+  out[64] = signature.recovery + 27;
+  return `0x${Buffer.from(out).toString("hex")}`;
+}
+async function mintHomeWalletToken(privateKey, options = {}) {
+  const address = addressFromPrivateKey(privateKey).toLowerCase();
+  const issuedAt = options.issuedAt ?? Math.floor(Date.now() / 1e3);
+  const ttl = Math.min(options.ttlSeconds ?? DEFAULT_TTL_SECONDS, MAX_TTL_SECONDS);
+  const expiresAt = issuedAt + ttl;
+  const signature = signPersonalMessage(privateKey, buildHomeAuthMessage({ address, issuedAt, expiresAt }));
+  return `scwt_${Buffer.from(JSON.stringify({ address, issuedAt, expiresAt, signature }), "utf8").toString("base64url")}`;
+}
+
 // src/codex/paths.ts
 import path4 from "node:path";
 var CODEX_PENDING_DIR = path4.join(STATE_DIR, "codex-pending");
@@ -2994,6 +3113,16 @@ function recoverQuietPendingLogs(dir, flushScriptPath) {
   }
 }
 
+// src/lib/stdout.ts
+async function writeAll(output, text) {
+  await new Promise((resolve, reject) => {
+    output.write(text, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
 // src/session-start.ts
 import fs5 from "node:fs";
 import path6 from "node:path";
@@ -3015,9 +3144,13 @@ async function main() {
   const language = detectLanguage(cwd);
   const query = [workspace, language, "session start"].filter(Boolean).join(" ");
   let deriveHeaders;
+  let homeToken;
   if (config.private_key) {
     try {
-      deriveHeaders = await getDeriveHeaders({ apiUrl: config.api_url, apiKey: config.api_key ?? "", privateKey: config.private_key });
+      [deriveHeaders, homeToken] = await Promise.all([
+        getDeriveHeaders({ apiUrl: config.api_url, apiKey: config.api_key ?? "", privateKey: config.private_key }),
+        mintHomeWalletToken(config.private_key)
+      ]);
     } catch (err) {
       log("debug", "session-start derive failed (fail-open)", { error: err.message });
     }
@@ -3028,21 +3161,30 @@ async function main() {
     deriveHeaders,
     query,
     context: language ? { language } : {},
-    timeoutMs: 5e3
+    timeoutMs: 8500,
+    homeUrl: config.home_url,
+    homeToken,
+    repoId: workspace
   });
   if (pack.text) {
-    emitContext(pack.text);
-    log("info", "session-start injected", { sheetIds: pack.sheetIds.length, workspace });
+    await emitContext(pack.text);
+    log("info", "session-start injected", {
+      sheetIds: pack.sheetIds.length,
+      workspace,
+      contextSource: pack.source,
+      coverageStatus: pack.coverageStatus,
+      reproducibilityHash: pack.reproducibilityHash
+    });
   }
 }
-function emitContext(text) {
+async function emitContext(text) {
   const payload = {
     hookSpecificOutput: {
       hookEventName: "SessionStart",
       additionalContext: text
     }
   };
-  process.stdout.write(JSON.stringify(payload));
+  await writeAll(process.stdout, JSON.stringify(payload));
 }
 var LANG_MARKERS = [
   { file: "package.json", language: "typescript" },
@@ -3068,4 +3210,6 @@ main().catch((err) => {
     log("debug", "session-start failed", { error: err.message });
   } catch {
   }
-}).finally(() => process.exit(0));
+}).finally(() => {
+  process.exitCode = 0;
+});
