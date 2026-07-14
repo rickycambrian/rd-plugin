@@ -1,5 +1,6 @@
-import { STATE_FILE } from './paths.js';
+import { STATE_FILE, STATE_DIR } from './paths.js';
 import { readJsonFile, writeJsonFileAtomic, sha256Hex } from './fsutil.js';
+import { acquireFlushLockOrWait, releaseFlushLock } from './flush-lock.js';
 import type { PendingEvent } from './event.js';
 
 /** Per-session flush bookkeeping used for idempotency. */
@@ -27,10 +28,10 @@ export interface PluginState {
   backfilled?: Record<string, true>;
 }
 
-const EMPTY: PluginState = { flushed: {} };
-
 export function readState(): PluginState {
-  const state = readJsonFile<PluginState>(STATE_FILE, EMPTY);
+  // Fresh default per call — a shared fallback object would alias every
+  // caller's state when the file is missing.
+  const state = readJsonFile<PluginState>(STATE_FILE, { flushed: {} });
   if (!state.flushed || typeof state.flushed !== 'object') state.flushed = {};
   return state;
 }
@@ -45,6 +46,32 @@ export function flushedEntry(state: PluginState, sessionId: string): FlushedEntr
 
 export function setFlushedEntry(state: PluginState, sessionId: string, entry: FlushedEntry): void {
   state.flushed[sessionId] = { ...flushedEntry(state, sessionId), ...entry, updatedAt: new Date().toISOString() };
+}
+
+/**
+ * Apply a mutation to state.json under the global state lock (read-merge-write).
+ * writeState() is atomic on disk, but the surrounding read-modify-write is not:
+ * flushes from concurrently running sessions each read state, mutate their own
+ * entry, and write the whole file back — the last writer clobbers everyone
+ * else's entries. Found in production 2026-07-14: sessions whose graph nodes
+ * exist in KFDB but whose flushed record was lost, which defeats fingerprint
+ * idempotency and the legacy session-end floors. Serializing only the
+ * read-merge-write (not the flush itself) closes the race cheaply.
+ */
+export async function updateStateLocked(mutate: (state: PluginState) => void): Promise<void> {
+  await acquireFlushLockOrWait(STATE_DIR, 'state', 10_000);
+  try {
+    const state = readState();
+    mutate(state);
+    writeState(state);
+  } finally {
+    releaseFlushLock(STATE_DIR, 'state');
+  }
+}
+
+/** Merge one session's flushed entry into the current on-disk state under the lock. */
+export async function commitFlushedEntry(sessionId: string, entry: FlushedEntry): Promise<void> {
+  await updateStateLocked((state) => setFlushedEntry(state, sessionId, entry));
 }
 
 /**

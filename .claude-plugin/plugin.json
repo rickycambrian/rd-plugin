@@ -1,7 +1,7 @@
 {
   "name": "rd-plugin",
-  "version": "1.3.3",
-  "description": "rickydata session tracking for Claude Code — captures your coding sessions into your wallet-scoped KFDB knowledge graph, locally or on the rickydata TEE stack.",
+  "version": "1.3.4",
+  "description": "rickydata session tracking for Claude Code \u2014 captures your coding sessions into your wallet-scoped KFDB knowledge graph, locally or on the rickydata TEE stack.",
   "author": {
     "name": "rickydata",
     "url": "https://rickydata.org"
@@ -9,5 +9,11 @@
   "homepage": "https://github.com/rickycambrian/rd-plugin",
   "repository": "https://github.com/rickycambrian/rd-plugin",
   "license": "AGPL-3.0",
-  "keywords": ["rickydata", "kfdb", "knowledge-graph", "session-tracking", "telemetry"]
+  "keywords": [
+    "rickydata",
+    "kfdb",
+    "knowledge-graph",
+    "session-tracking",
+    "telemetry"
+  ]
 }

@@ -846,10 +846,71 @@ function writeFileAtomic(filePath, body) {
   fs3.renameSync(tmp, filePath);
 }
 
+// src/lib/flush-lock.ts
+import fs4 from "node:fs";
+import path4 from "node:path";
+var FLUSH_LOCK_STALE_MS = 10 * 60 * 1e3;
+function lockPath(dir, sessionId) {
+  const safe = sessionId.replace(/[^A-Za-z0-9_.-]/g, "_");
+  return path4.join(dir, `${safe}.flush.lock`);
+}
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function holderIsLive(dir, sessionId) {
+  try {
+    const body = JSON.parse(fs4.readFileSync(lockPath(dir, sessionId), "utf8"));
+    const fresh = typeof body.startedAt === "number" && Date.now() - body.startedAt < FLUSH_LOCK_STALE_MS;
+    const alive = typeof body.pid === "number" && body.pid > 0 && pidAlive(body.pid);
+    return fresh && alive;
+  } catch {
+    return false;
+  }
+}
+function acquireFlushLock(dir, sessionId) {
+  const file = lockPath(dir, sessionId);
+  const body = JSON.stringify({ pid: process.pid, startedAt: Date.now() });
+  try {
+    fs4.mkdirSync(dir, { recursive: true });
+    fs4.writeFileSync(file, body, { flag: "wx", mode: 384 });
+    return true;
+  } catch {
+    if (holderIsLive(dir, sessionId)) return false;
+    try {
+      fs4.writeFileSync(file, body, { mode: 384 });
+    } catch {
+    }
+    return true;
+  }
+}
+async function acquireFlushLockOrWait(dir, sessionId, maxWaitMs = 2e4) {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    if (acquireFlushLock(dir, sessionId)) return;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  try {
+    fs4.writeFileSync(lockPath(dir, sessionId), JSON.stringify({ pid: process.pid, startedAt: Date.now() }), { mode: 384 });
+  } catch {
+  }
+}
+function releaseFlushLock(dir, sessionId) {
+  const file = lockPath(dir, sessionId);
+  try {
+    const body = JSON.parse(fs4.readFileSync(file, "utf8"));
+    if (body.pid === process.pid) fs4.rmSync(file, { force: true });
+  } catch {
+  }
+}
+
 // src/lib/state.ts
-var EMPTY = { flushed: {} };
 function readState() {
-  const state = readJsonFile(STATE_FILE, EMPTY);
+  const state = readJsonFile(STATE_FILE, { flushed: {} });
   if (!state.flushed || typeof state.flushed !== "object") state.flushed = {};
   return state;
 }
@@ -861,6 +922,19 @@ function flushedEntry(state, sessionId) {
 }
 function setFlushedEntry(state, sessionId, entry) {
   state.flushed[sessionId] = { ...flushedEntry(state, sessionId), ...entry, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+}
+async function updateStateLocked(mutate) {
+  await acquireFlushLockOrWait(STATE_DIR, "state", 1e4);
+  try {
+    const state = readState();
+    mutate(state);
+    writeState(state);
+  } finally {
+    releaseFlushLock(STATE_DIR, "state");
+  }
+}
+async function commitFlushedEntry(sessionId, entry) {
+  await updateStateLocked((state) => setFlushedEntry(state, sessionId, entry));
 }
 
 // src/lib/derive.ts
@@ -2901,8 +2975,8 @@ async function getDeriveHeaders(config) {
 }
 
 // src/lib/queue.ts
-import fs4 from "node:fs";
-import path4 from "node:path";
+import fs5 from "node:fs";
+import path5 from "node:path";
 import { createHash as createHash6 } from "node:crypto";
 
 // src/lib/http.ts
@@ -3594,12 +3668,12 @@ ${JSON.stringify(request.body)}`);
 function enqueue(request, dirs = {}) {
   const dir = dirs.dir ?? QUEUE_DIR;
   try {
-    fs4.mkdirSync(dir, { recursive: true });
+    fs5.mkdirSync(dir, { recursive: true });
     const contentHash = contentHashOf(request);
     const keyHash = request.dedupeKey ? hash16(request.dedupeKey) : void 0;
     let existing = [];
     try {
-      existing = fs4.readdirSync(dir).filter((f) => f.endsWith(".json"));
+      existing = fs5.readdirSync(dir).filter((f) => f.endsWith(".json"));
     } catch {
     }
     if (existing.some((f) => f.includes(`-c${contentHash}.json`))) {
@@ -3610,7 +3684,7 @@ function enqueue(request, dirs = {}) {
       const superseded = existing.filter((f) => f.includes(`-k${keyHash}-`));
       for (const f of superseded) {
         try {
-          fs4.rmSync(path4.join(dir, f), { force: true });
+          fs5.rmSync(path5.join(dir, f), { force: true });
         } catch {
         }
       }
@@ -3622,7 +3696,7 @@ function enqueue(request, dirs = {}) {
     const keySegment = keyHash ? `-k${keyHash}` : "";
     const name = `${Date.now()}-${rand}${keySegment}-c${contentHash}.json`;
     const entry = { ...request, queuedAt: (/* @__PURE__ */ new Date()).toISOString() };
-    fs4.writeFileSync(path4.join(dir, name), JSON.stringify(entry), { mode: 384 });
+    fs5.writeFileSync(path5.join(dir, name), JSON.stringify(entry), { mode: 384 });
   } catch (err) {
     log("warn", "enqueue failed", { error: err.message });
   }
@@ -3640,9 +3714,9 @@ function recordFailure(full, entry, error, kind, deadDir) {
   const maxAttempts = kind === "permanent" ? MAX_ATTEMPTS_PERMANENT : MAX_ATTEMPTS_TRANSIENT;
   if (attempts >= maxAttempts) {
     try {
-      fs4.mkdirSync(deadDir, { recursive: true });
-      fs4.renameSync(full, path4.join(deadDir, path4.basename(full)));
-      log("warn", "queue entry dead-lettered", { file: path4.basename(full), attempts, error: error.slice(0, 200) });
+      fs5.mkdirSync(deadDir, { recursive: true });
+      fs5.renameSync(full, path5.join(deadDir, path5.basename(full)));
+      log("warn", "queue entry dead-lettered", { file: path5.basename(full), attempts, error: error.slice(0, 200) });
       return "deadLettered";
     } catch {
     }
@@ -3654,7 +3728,7 @@ function recordFailure(full, entry, error, kind, deadDir) {
       nextAttemptAt: new Date(Date.now() + backoffMs(attempts)).toISOString(),
       lastError: error.slice(0, 300)
     };
-    fs4.writeFileSync(full, JSON.stringify(updated), { mode: 384 });
+    fs5.writeFileSync(full, JSON.stringify(updated), { mode: 384 });
   } catch {
   }
   return "retained";
@@ -3663,7 +3737,7 @@ function splitEntry(dir, full, entry, operations) {
   try {
     const mid = Math.ceil(operations.length / 2);
     const halves = [operations.slice(0, mid), operations.slice(mid)];
-    const tsPrefix = path4.basename(full).split("-")[0] || `${Date.now()}`;
+    const tsPrefix = path5.basename(full).split("-")[0] || `${Date.now()}`;
     const rand = Math.random().toString(36).slice(2, 10);
     halves.forEach((ops, i) => {
       const body = { ...entry.body, operations: ops };
@@ -3680,9 +3754,9 @@ function splitEntry(dir, full, entry, operations) {
         lastError: `split after timeout at ${operations.length} ops`
       };
       const name = `${tsPrefix}-${rand}${i}-c${contentHashOf(request)}.json`;
-      fs4.writeFileSync(path4.join(dir, name), JSON.stringify(request), { mode: 384 });
+      fs5.writeFileSync(path5.join(dir, name), JSON.stringify(request), { mode: 384 });
     });
-    fs4.rmSync(full, { force: true });
+    fs5.rmSync(full, { force: true });
     return true;
   } catch (err) {
     log("warn", "queue split failed", { error: err.message });
@@ -3691,7 +3765,7 @@ function splitEntry(dir, full, entry, operations) {
 }
 function countQueue(dir) {
   try {
-    return fs4.readdirSync(dir).filter((f) => f.endsWith(".json")).length;
+    return fs5.readdirSync(dir).filter((f) => f.endsWith(".json")).length;
   } catch {
     return 0;
   }
@@ -3703,14 +3777,14 @@ async function drainQueue(auth, limit = 500, options = {}) {
   const result = { sent: 0, failed: 0, remaining: 0, deferred: 0, deduped: 0, deadLettered: 0, split: 0 };
   let files;
   try {
-    files = fs4.readdirSync(dir).filter((f) => f.endsWith(".json"));
+    files = fs5.readdirSync(dir).filter((f) => f.endsWith(".json"));
   } catch {
     return result;
   }
   if (files.length === 0) return result;
-  const lockPath2 = path4.join(dir, ".drain.lock");
+  const lockPath2 = path5.join(dir, ".drain.lock");
   try {
-    const stat = fs4.statSync(lockPath2);
+    const stat = fs5.statSync(lockPath2);
     if (Date.now() - stat.mtimeMs < DRAIN_LOCK_STALE_MS) {
       log("debug", "drain skipped: another drain holds the lock");
       result.remaining = files.length;
@@ -3719,7 +3793,7 @@ async function drainQueue(auth, limit = 500, options = {}) {
   } catch {
   }
   try {
-    fs4.writeFileSync(lockPath2, JSON.stringify({ pid: process.pid, startedAt: (/* @__PURE__ */ new Date()).toISOString() }), { mode: 384 });
+    fs5.writeFileSync(lockPath2, JSON.stringify({ pid: process.pid, startedAt: (/* @__PURE__ */ new Date()).toISOString() }), { mode: 384 });
   } catch {
   }
   const startedAt = Date.now();
@@ -3734,13 +3808,13 @@ async function drainQueue(auth, limit = 500, options = {}) {
         log("info", "drain budget exhausted", { attempted, budgetMs: maxMs });
         break;
       }
-      const full = path4.join(dir, file);
+      const full = path5.join(dir, file);
       let entry;
       try {
-        entry = JSON.parse(fs4.readFileSync(full, "utf8"));
+        entry = JSON.parse(fs5.readFileSync(full, "utf8"));
       } catch {
         try {
-          fs4.rmSync(full, { force: true });
+          fs5.rmSync(full, { force: true });
         } catch {
         }
         continue;
@@ -3752,7 +3826,7 @@ async function drainQueue(auth, limit = 500, options = {}) {
       const contentHash = HASH_RE.exec(file)?.[1] ?? contentHashOf(entry);
       if (sentHashes.has(contentHash)) {
         try {
-          fs4.rmSync(full, { force: true });
+          fs5.rmSync(full, { force: true });
         } catch {
         }
         result.deduped += 1;
@@ -3773,7 +3847,7 @@ async function drainQueue(auth, limit = 500, options = {}) {
       try {
         const response = await postJson(entry.url, entry.body, headers, GRAPH_WRITE_TIMEOUT_MS);
         if (response.ok) {
-          fs4.rmSync(full, { force: true });
+          fs5.rmSync(full, { force: true });
           result.sent += 1;
           sentHashes.add(contentHash);
         } else if (response.status === 429) {
@@ -3812,74 +3886,12 @@ async function drainQueue(auth, limit = 500, options = {}) {
     }
   } finally {
     try {
-      fs4.rmSync(lockPath2, { force: true });
+      fs5.rmSync(lockPath2, { force: true });
     } catch {
     }
   }
   result.remaining = countQueue(dir);
   return result;
-}
-
-// src/lib/flush-lock.ts
-import fs5 from "node:fs";
-import path5 from "node:path";
-var FLUSH_LOCK_STALE_MS = 10 * 60 * 1e3;
-function lockPath(dir, sessionId) {
-  const safe = sessionId.replace(/[^A-Za-z0-9_.-]/g, "_");
-  return path5.join(dir, `${safe}.flush.lock`);
-}
-function pidAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code === "EPERM";
-  }
-}
-function holderIsLive(dir, sessionId) {
-  try {
-    const body = JSON.parse(fs5.readFileSync(lockPath(dir, sessionId), "utf8"));
-    const fresh = typeof body.startedAt === "number" && Date.now() - body.startedAt < FLUSH_LOCK_STALE_MS;
-    const alive = typeof body.pid === "number" && body.pid > 0 && pidAlive(body.pid);
-    return fresh && alive;
-  } catch {
-    return false;
-  }
-}
-function acquireFlushLock(dir, sessionId) {
-  const file = lockPath(dir, sessionId);
-  const body = JSON.stringify({ pid: process.pid, startedAt: Date.now() });
-  try {
-    fs5.mkdirSync(dir, { recursive: true });
-    fs5.writeFileSync(file, body, { flag: "wx", mode: 384 });
-    return true;
-  } catch {
-    if (holderIsLive(dir, sessionId)) return false;
-    try {
-      fs5.writeFileSync(file, body, { mode: 384 });
-    } catch {
-    }
-    return true;
-  }
-}
-async function acquireFlushLockOrWait(dir, sessionId, maxWaitMs = 2e4) {
-  const deadline = Date.now() + maxWaitMs;
-  while (Date.now() < deadline) {
-    if (acquireFlushLock(dir, sessionId)) return;
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  try {
-    fs5.writeFileSync(lockPath(dir, sessionId), JSON.stringify({ pid: process.pid, startedAt: Date.now() }), { mode: 384 });
-  } catch {
-  }
-}
-function releaseFlushLock(dir, sessionId) {
-  const file = lockPath(dir, sessionId);
-  try {
-    const body = JSON.parse(fs5.readFileSync(file, "utf8"));
-    if (body.pid === process.pid) fs5.rmSync(file, { force: true });
-  } catch {
-  }
 }
 
 // src/codex/pending.ts
@@ -4142,7 +4154,7 @@ async function runCodexFlush(codexSessionId, opts, env = process.env) {
       await flushCodexDirect(config, codexSessionId, events);
     }
     setFlushedEntry(state, codexSessionId, { fingerprint });
-    writeState(state);
+    await commitFlushedEntry(codexSessionId, flushedEntry(state, codexSessionId));
     if (opts.final) clearCodexPending(codexSessionId);
   } finally {
     releaseFlushLock(CODEX_PENDING_DIR, codexSessionId);

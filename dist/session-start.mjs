@@ -2966,9 +2966,38 @@ async function getDeriveHeaders(config) {
 import path4 from "node:path";
 var CODEX_PENDING_DIR = path4.join(STATE_DIR, "codex-pending");
 
-// src/session-start.ts
+// src/lib/recover.ts
+import { spawn } from "node:child_process";
 import fs4 from "node:fs";
 import path5 from "node:path";
+var RECOVER_MIN_AGE_MS = 6 * 60 * 60 * 1e3;
+var RECOVER_MAX_PER_START = 8;
+function selectQuietPendingLogs(dir, nowMs, minAgeMs = RECOVER_MIN_AGE_MS, cap = RECOVER_MAX_PER_START) {
+  if (!fs4.existsSync(dir)) return [];
+  return fs4.readdirSync(dir).filter((f) => f.endsWith(".jsonl")).map((f) => ({ sessionId: f.slice(0, -".jsonl".length), mtimeMs: fs4.statSync(path5.join(dir, f)).mtimeMs })).filter((e) => nowMs - e.mtimeMs > minAgeMs).sort((a, b) => a.mtimeMs - b.mtimeMs).slice(0, cap).map((e) => e.sessionId);
+}
+function recoverQuietPendingLogs(dir, flushScriptPath) {
+  try {
+    const quiet = selectQuietPendingLogs(dir, Date.now());
+    for (const sessionId of quiet) {
+      const child = spawn(process.execPath, [flushScriptPath, sessionId], {
+        detached: true,
+        stdio: "ignore",
+        env: process.env
+      });
+      child.unref();
+    }
+    return quiet.length;
+  } catch (err) {
+    log("debug", "pending-log recovery skipped", { error: err.message });
+    return 0;
+  }
+}
+
+// src/session-start.ts
+import fs5 from "node:fs";
+import path6 from "node:path";
+import { fileURLToPath } from "node:url";
 var PENDING_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
 async function main() {
   const input = await readHookInput();
@@ -2978,8 +3007,11 @@ async function main() {
   if (sink === "off" || !shouldTrack(config, input.cwd)) return;
   const pruned = pruneStaleFiles(PENDING_DIR, PENDING_MAX_AGE_MS) + pruneStaleFiles(CODEX_PENDING_DIR, PENDING_MAX_AGE_MS);
   if (pruned > 0) log("info", "pruned stale pending logs", { pruned });
+  const here = path6.dirname(fileURLToPath(import.meta.url));
+  const recovered = recoverQuietPendingLogs(PENDING_DIR, path6.join(here, "flush.mjs")) + recoverQuietPendingLogs(CODEX_PENDING_DIR, path6.join(here, "codex-flush.mjs"));
+  if (recovered > 0) log("info", "spawned recovery flushes for quiet pending logs", { recovered });
   const cwd = input.cwd || process.cwd();
-  const workspace = path5.basename(cwd) || cwd;
+  const workspace = path6.basename(cwd) || cwd;
   const language = detectLanguage(cwd);
   const query = [workspace, language, "session start"].filter(Boolean).join(" ");
   let deriveHeaders;
@@ -3025,7 +3057,7 @@ var LANG_MARKERS = [
 function detectLanguage(cwd) {
   try {
     for (const marker of LANG_MARKERS) {
-      if (fs4.existsSync(path5.join(cwd, marker.file))) return marker.language;
+      if (fs5.existsSync(path6.join(cwd, marker.file))) return marker.language;
     }
   } catch {
   }

@@ -733,9 +733,9 @@ var init_sha3 = __esm({
 });
 
 // src/backfill.ts
-import fs6 from "node:fs";
+import fs7 from "node:fs";
 import os2 from "node:os";
-import path7 from "node:path";
+import path8 from "node:path";
 
 // src/lib/config.ts
 import fs from "node:fs";
@@ -848,24 +848,95 @@ function writeFileAtomic(filePath, body) {
   fs3.renameSync(tmp, filePath);
 }
 
+// src/lib/flush-lock.ts
+import fs4 from "node:fs";
+import path4 from "node:path";
+var FLUSH_LOCK_STALE_MS = 10 * 60 * 1e3;
+function lockPath(dir, sessionId) {
+  const safe = sessionId.replace(/[^A-Za-z0-9_.-]/g, "_");
+  return path4.join(dir, `${safe}.flush.lock`);
+}
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function holderIsLive(dir, sessionId) {
+  try {
+    const body = JSON.parse(fs4.readFileSync(lockPath(dir, sessionId), "utf8"));
+    const fresh = typeof body.startedAt === "number" && Date.now() - body.startedAt < FLUSH_LOCK_STALE_MS;
+    const alive = typeof body.pid === "number" && body.pid > 0 && pidAlive(body.pid);
+    return fresh && alive;
+  } catch {
+    return false;
+  }
+}
+function acquireFlushLock(dir, sessionId) {
+  const file = lockPath(dir, sessionId);
+  const body = JSON.stringify({ pid: process.pid, startedAt: Date.now() });
+  try {
+    fs4.mkdirSync(dir, { recursive: true });
+    fs4.writeFileSync(file, body, { flag: "wx", mode: 384 });
+    return true;
+  } catch {
+    if (holderIsLive(dir, sessionId)) return false;
+    try {
+      fs4.writeFileSync(file, body, { mode: 384 });
+    } catch {
+    }
+    return true;
+  }
+}
+async function acquireFlushLockOrWait(dir, sessionId, maxWaitMs = 2e4) {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    if (acquireFlushLock(dir, sessionId)) return;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  try {
+    fs4.writeFileSync(lockPath(dir, sessionId), JSON.stringify({ pid: process.pid, startedAt: Date.now() }), { mode: 384 });
+  } catch {
+  }
+}
+function releaseFlushLock(dir, sessionId) {
+  const file = lockPath(dir, sessionId);
+  try {
+    const body = JSON.parse(fs4.readFileSync(file, "utf8"));
+    if (body.pid === process.pid) fs4.rmSync(file, { force: true });
+  } catch {
+  }
+}
+
 // src/lib/state.ts
-var EMPTY = { flushed: {} };
 function readState() {
-  const state = readJsonFile(STATE_FILE, EMPTY);
+  const state = readJsonFile(STATE_FILE, { flushed: {} });
   if (!state.flushed || typeof state.flushed !== "object") state.flushed = {};
   return state;
 }
 function writeState(state) {
   writeJsonFileAtomic(STATE_FILE, state);
 }
+async function updateStateLocked(mutate) {
+  await acquireFlushLockOrWait(STATE_DIR, "state", 1e4);
+  try {
+    const state = readState();
+    mutate(state);
+    writeState(state);
+  } finally {
+    releaseFlushLock(STATE_DIR, "state");
+  }
+}
 
 // src/lib/transcript.ts
-import fs4 from "node:fs";
+import fs5 from "node:fs";
 var FILE_EDIT_TOOLS = /* @__PURE__ */ new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 function readLines(transcriptPath) {
   let raw;
   try {
-    raw = fs4.readFileSync(transcriptPath, "utf8");
+    raw = fs5.readFileSync(transcriptPath, "utf8");
   } catch {
     return [];
   }
@@ -3630,7 +3701,7 @@ function batchOperations(operations) {
 }
 
 // src/lib/spool.ts
-import path4 from "node:path";
+import path5 from "node:path";
 function spoolFileName(claudeSessionId, seq, batchIndex = 0) {
   const safe = String(claudeSessionId || "unknown").replace(/[^A-Za-z0-9_.-]/g, "_");
   const suffix = batchIndex > 0 ? `-b${batchIndex}` : "";
@@ -3644,7 +3715,7 @@ function writeSpool(spoolDir, traces) {
     if (batches.length === 0) batches.push([]);
     batches.forEach((batch, batchIndex) => {
       const body = { ...trace, spoolVersion: 2, graphOperations: batch };
-      const filePath = path4.join(spoolDir, spoolFileName(trace.claudeSessionId, trace.turnIndex, batchIndex));
+      const filePath = path5.join(spoolDir, spoolFileName(trace.claudeSessionId, trace.turnIndex, batchIndex));
       writeFileAtomic(filePath, JSON.stringify(body));
       written.push(filePath);
     });
@@ -3653,11 +3724,11 @@ function writeSpool(spoolDir, traces) {
 }
 
 // src/lib/legacy-stream.ts
-import path6 from "node:path";
+import path7 from "node:path";
 
 // src/lib/queue.ts
-import fs5 from "node:fs";
-import path5 from "node:path";
+import fs6 from "node:fs";
+import path6 from "node:path";
 import { createHash as createHash6 } from "node:crypto";
 var BACKOFF_CAP_MS = 4 * 60 * 60 * 1e3;
 var DEFAULT_DRAIN_BUDGET_MS = 4 * 6e4;
@@ -3672,12 +3743,12 @@ ${JSON.stringify(request.body)}`);
 function enqueue(request, dirs = {}) {
   const dir = dirs.dir ?? QUEUE_DIR;
   try {
-    fs5.mkdirSync(dir, { recursive: true });
+    fs6.mkdirSync(dir, { recursive: true });
     const contentHash = contentHashOf(request);
     const keyHash = request.dedupeKey ? hash16(request.dedupeKey) : void 0;
     let existing = [];
     try {
-      existing = fs5.readdirSync(dir).filter((f) => f.endsWith(".json"));
+      existing = fs6.readdirSync(dir).filter((f) => f.endsWith(".json"));
     } catch {
     }
     if (existing.some((f) => f.includes(`-c${contentHash}.json`))) {
@@ -3688,7 +3759,7 @@ function enqueue(request, dirs = {}) {
       const superseded = existing.filter((f) => f.includes(`-k${keyHash}-`));
       for (const f of superseded) {
         try {
-          fs5.rmSync(path5.join(dir, f), { force: true });
+          fs6.rmSync(path6.join(dir, f), { force: true });
         } catch {
         }
       }
@@ -3700,7 +3771,7 @@ function enqueue(request, dirs = {}) {
     const keySegment = keyHash ? `-k${keyHash}` : "";
     const name = `${Date.now()}-${rand}${keySegment}-c${contentHash}.json`;
     const entry = { ...request, queuedAt: (/* @__PURE__ */ new Date()).toISOString() };
-    fs5.writeFileSync(path5.join(dir, name), JSON.stringify(entry), { mode: 384 });
+    fs6.writeFileSync(path6.join(dir, name), JSON.stringify(entry), { mode: 384 });
   } catch (err) {
     log("warn", "enqueue failed", { error: err.message });
   }
@@ -3709,7 +3780,7 @@ function enqueue(request, dirs = {}) {
 // src/lib/legacy-stream.ts
 function workspaceName(cwd) {
   if (!cwd) return "unknown";
-  return path6.basename(cwd) || cwd;
+  return path7.basename(cwd) || cwd;
 }
 function isoTime(ms) {
   return new Date(ms || Date.now()).toISOString();
@@ -4036,24 +4107,24 @@ function parseArgs(args) {
   };
 }
 function collectSessionFiles() {
-  const projectsDir = path7.join(os2.homedir(), ".claude", "projects");
+  const projectsDir = path8.join(os2.homedir(), ".claude", "projects");
   const out = [];
   const stack = [projectsDir];
   while (stack.length > 0) {
     const dir = stack.pop();
     let dirents;
     try {
-      dirents = fs6.readdirSync(dir, { withFileTypes: true });
+      dirents = fs7.readdirSync(dir, { withFileTypes: true });
     } catch {
       continue;
     }
     for (const dirent of dirents) {
-      const full = path7.join(dir, dirent.name);
+      const full = path8.join(dir, dirent.name);
       if (dirent.isDirectory()) {
         stack.push(full);
       } else if (dirent.isFile() && dirent.name.endsWith(".jsonl")) {
         try {
-          const stat = fs6.statSync(full);
+          const stat = fs7.statSync(full);
           out.push({ file: full, id: dirent.name.replace(/\.jsonl$/, ""), mtimeMs: stat.mtimeMs });
         } catch {
         }
@@ -4136,7 +4207,10 @@ async function main() {
     }
     state.backfilled[session.id] = true;
     state.backfillWatermark = new Date(session.mtimeMs).toISOString();
-    writeState(state);
+    await updateStateLocked((current) => {
+      current.backfilled = { ...current.backfilled ?? {}, ...state.backfilled };
+      current.backfillWatermark = state.backfillWatermark;
+    });
     process.stdout.write(`  replayed ${claudeSessionId} (${events.length} events)
 `);
     if (sleepMs > 0) await sleep(sleepMs);

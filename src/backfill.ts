@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadConfig, resolveSink } from './lib/config.js';
 import { setLogLevel, log } from './lib/log.js';
-import { readState, writeState } from './lib/state.js';
+import { readState, updateStateLocked } from './lib/state.js';
 import { parseTranscriptSummary, transcriptToEvents } from './lib/transcript.js';
 import { getDeriveHeaders, addressFromPrivateKey, type DeriveHeaders } from './lib/derive.js';
 import { writeDirectUnit, writeGatewayUnit } from './lib/writer.js';
@@ -159,7 +159,12 @@ async function main(): Promise<void> {
 
     state.backfilled[session.id] = true;
     state.backfillWatermark = new Date(session.mtimeMs).toISOString();
-    writeState(state);
+    // Locked read-merge-write so concurrent session flushes don't lose entries
+    // (and vice versa) — see updateStateLocked.
+    await updateStateLocked((current) => {
+      current.backfilled = { ...(current.backfilled ?? {}), ...state.backfilled };
+      current.backfillWatermark = state.backfillWatermark;
+    });
     process.stdout.write(`  replayed ${claudeSessionId} (${events.length} events)\n`);
 
     if (sleepMs > 0) await sleep(sleepMs);

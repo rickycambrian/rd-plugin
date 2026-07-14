@@ -1,7 +1,7 @@
 import { loadConfig, resolveSink, type RdConfig } from './lib/config.js';
 import { setLogLevel, log } from './lib/log.js';
 import { readPending, clearPending } from './lib/pending.js';
-import { readState, writeState, flushedEntry, setFlushedEntry, computeFingerprint, type FlushedEntry } from './lib/state.js';
+import { readState, flushedEntry, setFlushedEntry, commitFlushedEntry, computeFingerprint, type FlushedEntry } from './lib/state.js';
 import type { PendingEvent } from './lib/event.js';
 import { parseTranscriptSummary, findTranscriptForSession, type TranscriptSummary } from './lib/transcript.js';
 import { getDeriveHeaders, addressFromPrivateKey, type DeriveHeaders } from './lib/derive.js';
@@ -83,7 +83,9 @@ async function main(): Promise<void> {
     }
 
     setFlushedEntry(state, claudeSessionId, { fingerprint });
-    writeState(state);
+    // Persist only this session's accumulated entry via a locked read-merge-write
+    // — a whole-file writeState() here loses concurrent sessions' entries.
+    await commitFlushedEntry(claudeSessionId, flushedEntry(state, claudeSessionId));
 
     // Only drop the pending log once the session has truly ended and been flushed.
     if (final) clearPending(claudeSessionId);

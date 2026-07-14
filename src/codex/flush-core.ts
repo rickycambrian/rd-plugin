@@ -1,6 +1,6 @@
 import { loadConfig, resolveSink } from '../lib/config.js';
 import { setLogLevel, log } from '../lib/log.js';
-import { readState, writeState, flushedEntry, setFlushedEntry } from '../lib/state.js';
+import { readState, flushedEntry, setFlushedEntry, commitFlushedEntry } from '../lib/state.js';
 import { sha256Hex } from '../lib/fsutil.js';
 import { getDeriveHeaders, addressFromPrivateKey, type DeriveHeaders } from '../lib/derive.js';
 import { drainQueue } from '../lib/queue.js';
@@ -71,7 +71,9 @@ export async function runCodexFlush(
     }
 
     setFlushedEntry(state, codexSessionId, { fingerprint });
-    writeState(state);
+    // Locked read-merge-write — see commitFlushedEntry; whole-file writeState()
+    // here loses concurrent sessions' entries.
+    await commitFlushedEntry(codexSessionId, flushedEntry(state, codexSessionId));
 
     if (opts.final) clearCodexPending(codexSessionId);
   } finally {

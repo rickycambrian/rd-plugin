@@ -6,8 +6,10 @@ import { getDeriveHeaders, type DeriveHeaders } from './lib/derive.js';
 import { pruneStaleFiles } from './lib/fsutil.js';
 import { PENDING_DIR } from './lib/paths.js';
 import { CODEX_PENDING_DIR } from './codex/paths.js';
+import { recoverQuietPendingLogs } from './lib/recover.js';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** Pending logs from sessions that died without a SessionEnd are GC'd here. */
 const PENDING_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -29,6 +31,13 @@ async function main(): Promise<void> {
   // GC pending logs from long-dead sessions (no SessionEnd → never cleared).
   const pruned = pruneStaleFiles(PENDING_DIR, PENDING_MAX_AGE_MS) + pruneStaleFiles(CODEX_PENDING_DIR, PENDING_MAX_AGE_MS);
   if (pruned > 0) log('info', 'pruned stale pending logs', { pruned });
+
+  // Recover quiet pending logs before the GC above ever reaches them.
+  // dist/session-start.mjs, flush.mjs, and codex-flush.mjs are bundled siblings.
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const recovered = recoverQuietPendingLogs(PENDING_DIR, path.join(here, 'flush.mjs'))
+    + recoverQuietPendingLogs(CODEX_PENDING_DIR, path.join(here, 'codex-flush.mjs'));
+  if (recovered > 0) log('info', 'spawned recovery flushes for quiet pending logs', { recovered });
 
   const cwd = input.cwd || process.cwd();
   const workspace = path.basename(cwd) || cwd;
