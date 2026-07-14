@@ -185,7 +185,7 @@ export async function findBySession(client, label, claudeSessionId, maxRows = 10
  */
 export async function sameSessionInDegree(client, walletAddress, claudeSessionId, opts = {}) {
   const maxRows = opts.limit || 10_000;
-  const extraFamilies = opts.extraFamilies || ['RickydataChatSession', 'RickydataAgentSession', 'AgentChatSession'];
+  const extraFamilies = opts.extraFamilies || ['RickydataChatSession', 'RickydataAgentSession', 'AgentChatSession', 'CodexSession'];
 
   const harnessId = harnessKeyNodeId(walletAddress, claudeSessionId);
   const ccId = claudeSessionNodeId(walletAddress, claudeSessionId, opts.agentId);
