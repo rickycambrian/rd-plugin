@@ -7,6 +7,7 @@ import { appendPending, pendingCount } from './lib/pending.js';
 import { loadConfig, resolveSink, shouldTrack } from './lib/config.js';
 import { setLogLevel, log } from './lib/log.js';
 import { wantsHelp } from './lib/cli-help.js';
+import { ownedRepository } from './codex/repo.js';
 
 const USAGE = `usage: node capture.mjs [--spawn-flush] [--final]
 
@@ -45,7 +46,16 @@ async function main(): Promise<void> {
 
   const sessionId = typeof input.session_id === 'string' && input.session_id ? input.session_id : 'unknown';
   const sequence = pendingCount(sessionId);
-  const event = toPendingEvent(input, sequence);
+  const repo = await ownedRepository(typeof input.cwd === 'string' ? input.cwd : undefined, null);
+  const repository = repo ? {
+    owner: repo.owner,
+    repository: repo.repository,
+    fullName: `${repo.owner}/${repo.repository}`,
+    remoteUrl: repo.remoteUrl,
+    branch: repo.branch,
+    commitSha: repo.commitSha,
+  } : undefined;
+  const event = toPendingEvent(input, sequence, repository);
   appendPending(sessionId, event);
 
   if (spawnFlush) {

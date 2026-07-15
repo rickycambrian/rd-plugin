@@ -6,7 +6,8 @@ import { enqueue } from '../lib/queue.js';
 import { log } from '../lib/log.js';
 import type { CodexPendingEvent } from './event.js';
 import { buildCodexTraces } from './trace.js';
-import { buildCodexGraphOperations } from './graph.js';
+import { buildCodexGraphWriteBundle } from './graph.js';
+import { writeContentArtifacts } from '../lib/artifacts.js';
 import { writeCodexSpool } from './spool.js';
 
 export interface CodexDirectUnitInput {
@@ -22,6 +23,8 @@ export interface CodexDirectUnitInput {
 export interface CodexDirectUnitResult {
   ops: number;
   graphOk: boolean;
+  artifactOk: boolean;
+  artifacts: number;
 }
 
 /**
@@ -34,8 +37,11 @@ export interface CodexDirectUnitResult {
 export async function writeCodexDirectUnit(input: CodexDirectUnitInput): Promise<CodexDirectUnitResult> {
   const { config, walletAddress, agentId, apiKey, deriveHeaders, codexSessionId, events } = input;
   const traces = buildCodexTraces({ walletAddress, agentId, codexSessionId, events });
-  const operations = buildCodexGraphOperations(walletAddress, traces);
+  const bundle = buildCodexGraphWriteBundle(walletAddress, traces);
+  const operations = bundle.operations;
   const writeUrl = `${config.api_url.replace(/\/$/, '')}/api/v1/write`;
+
+  const artifactResult = await writeContentArtifacts(config, apiKey, deriveHeaders, bundle.contentArtifacts);
 
   let graphOk = true;
   const batches = batchOperations(operations);
@@ -63,7 +69,7 @@ export async function writeCodexDirectUnit(input: CodexDirectUnitInput): Promise
     }
   }
 
-  return { ops: operations.length, graphOk };
+  return { ops: operations.length, graphOk, artifactOk: artifactResult.ok, artifacts: artifactResult.attempted };
 }
 
 export interface CodexGatewayUnitInput {

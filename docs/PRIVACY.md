@@ -21,8 +21,8 @@ The server stores ciphertext and a session reference. It cannot decrypt your dat
 
 When you run Claude Code on the rickydata remote TEE stack, rd-plugin runs in **gateway sink** mode:
 
-- The plugin inside the sandbox writes only **spool files** to a local directory. No API key, no wallet key, and no network calls happen inside the sandbox.
-- A trusted gateway-side ingestor — outside the agent sandbox, inside the TEE — reads the spool and performs the wallet-scoped write using a derive session that was established when you enabled remote capture. The derive key is released to that ingestor, never to the agent.
+- The plugin inside the sandbox writes only **spool files** to a local directory. No API key, no wallet key, and no network calls happen inside the sandbox. Version-3 records are split below the gateway's 2 MiB ceiling: one exact immutable artifact per prelude record, then graph-only batches.
+- A trusted gateway-side ingestor — outside the agent sandbox, inside the TEE — reads the spool, validates artifact hashes and byte lengths, persists every artifact in the requesting wallet's private KV, and only then writes graph references using a derive session established when you enabled remote capture. The derive key is released to that ingestor, never to the agent.
 
 This means even on shared remote infrastructure, your wallet key is never exposed to the code executing your session.
 
@@ -31,17 +31,22 @@ This means even on shared remote infrastructure, your wallet key is never expose
 When capture is enabled, rd-plugin records the shape of your Claude Code sessions:
 
 - Session boundaries (start/end, working directory, model).
-- Prompts and turns (when `track_messages` is on).
-- Tool calls and their names/arguments/results.
+- Complete observable prompts and assistant messages (when `track_messages` is on).
+- Complete observable tool calls and their names/arguments/results.
 - Files edited (when `track_files` is on) and git operations (when `track_git` is on).
+- Repository owner/name, remote, branch, and pinned commit when git can resolve them.
+- AskUser and permission questions, displayed options, and selected answers; and the exact context block injected at SessionStart.
 
-All of it is encrypted under your wallet as described above.
+Large observable values are content-addressed and split into bounded immutable
+chunks without truncation. All artifact bytes and graph records are encrypted
+under your wallet as described above.
 
 ## What is never collected
 
 - Your `private_key` or wallet signature material — these stay local (`direct` mode) or in the TEE (`gateway` mode); they are never written to the graph.
 - Data from directories listed in `excluded_directories`.
 - Anything at all when the sink resolves to `off` (no wallet configured, or explicitly disabled).
+- Hidden model reasoning or chain-of-thought. Only content observable to the human or tool boundary is eligible for capture.
 
 ## Fail-open
 

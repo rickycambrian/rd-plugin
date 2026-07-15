@@ -142,6 +142,17 @@ function loadCodexRepoOwners() {
 
 // src/codex/repo.ts
 import { execFile } from "node:child_process";
+function git(cwd, args) {
+  return new Promise((resolve) => {
+    try {
+      execFile("git", ["-C", cwd, ...args], { timeout: 5e3 }, (error, stdout) => {
+        resolve(error ? "" : String(stdout).trim());
+      });
+    } catch {
+      resolve("");
+    }
+  });
+}
 function parseGitHubRemote(remoteUrl) {
   const raw = String(remoteUrl || "").trim().replace(/\/$/, "");
   const scp = /^(?:[^@/]+@)?github\.com:([^/]+)\/([^/]+)$/i.exec(raw);
@@ -157,27 +168,92 @@ function parseGitHubRemote(remoteUrl) {
 }
 async function ownedRepository(cwd, owners) {
   if (!cwd) return null;
-  const remoteUrl = await new Promise((resolve) => {
-    try {
-      execFile("git", ["-C", cwd, "remote", "get-url", "origin"], { timeout: 5e3 }, (error, stdout) => {
-        resolve(error ? "" : String(stdout).trim());
-      });
-    } catch {
-      resolve("");
-    }
-  });
+  const [remoteUrl, branch, commitSha] = await Promise.all([
+    git(cwd, ["remote", "get-url", "origin"]),
+    git(cwd, ["branch", "--show-current"]),
+    git(cwd, ["rev-parse", "HEAD"])
+  ]);
   const parsed = parseGitHubRemote(remoteUrl);
   if (!parsed) return null;
   const owner = parsed.owner.toLowerCase();
   if (owners !== null && !owners.includes(owner)) return null;
-  return { owner, repository: parsed.repository, remoteUrl };
+  return {
+    owner,
+    repository: parsed.repository,
+    remoteUrl,
+    ...branch ? { branch } : {},
+    .../^[0-9a-f]{40}$/i.test(commitSha) ? { commitSha: commitSha.toLowerCase() } : {}
+  };
+}
+
+// src/lib/decision.ts
+function stringValue(value) {
+  return typeof value === "string" && value.trim() ? value : void 0;
+}
+function record(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function optionLabels(value) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (typeof item === "string" && item) return [item];
+    const row = record(item);
+    if (!row) return [];
+    const label = stringValue(row.label) ?? stringValue(row.value) ?? stringValue(row.type) ?? stringValue(row.name);
+    return label ? [label] : [];
+  });
+}
+function answerText(response) {
+  if (typeof response === "string") return response;
+  const row = record(response);
+  if (!row) return void 0;
+  const direct = stringValue(row.answer) ?? stringValue(row.selected) ?? stringValue(row.decision);
+  if (direct) return direct;
+  const answers = record(row.answers);
+  if (!answers) return void 0;
+  const values = Object.values(answers).flatMap((value) => {
+    if (typeof value === "string") return [value];
+    if (Array.isArray(value)) return value.filter((item) => typeof item === "string");
+    return [];
+  });
+  return values.length > 0 ? values.join("\n") : void 0;
+}
+function observableDecisionFields(input, toolResponse) {
+  const toolName = stringValue(input.tool_name) ?? "";
+  if (/askuser|ask_user/i.test(toolName)) {
+    const toolInput = record(input.tool_input);
+    const questions = Array.isArray(toolInput?.questions) ? toolInput.questions : [];
+    const questionRows = questions.map(record).filter((row) => Boolean(row));
+    const question = questionRows.map((row) => stringValue(row.question)).filter(Boolean).join("\n") || stringValue(toolInput?.question) || "Human input requested";
+    const options = questionRows.flatMap((row) => optionLabels(row.options));
+    if (options.length === 0) options.push(...optionLabels(toolInput?.options));
+    return {
+      decisionKind: "ask_user",
+      decisionQuestion: question,
+      decisionOptions: [...new Set(options)],
+      ...answerText(toolResponse) ? { decisionAnswer: answerText(toolResponse) } : {}
+    };
+  }
+  const hookName = stringValue(input.hook_event_name) ?? "";
+  const permissionDecision = stringValue(input.permission_decision);
+  if (/permission/i.test(hookName) || permissionDecision) {
+    const question = stringValue(input.permission_prompt) ?? stringValue(input.question) ?? stringValue(input.reason) ?? `Allow ${toolName || "requested tool"}?`;
+    const options = [
+      ...optionLabels(input.options),
+      ...optionLabels(input.permission_suggestions)
+    ];
+    return {
+      decisionKind: "tool_permission",
+      decisionQuestion: question,
+      decisionOptions: [...new Set(options)],
+      ...permissionDecision ? { decisionAnswer: permissionDecision } : {},
+      ...stringValue(input.permission_decision_reason) ? { decisionPolicyRef: stringValue(input.permission_decision_reason) } : {}
+    };
+  }
+  return void 0;
 }
 
 // src/codex/event.ts
-var MAX_STRING = 32e3;
-function truncate(value) {
-  return value.length <= MAX_STRING ? value : `${value.slice(0, MAX_STRING)}...[truncated ${value.length - MAX_STRING} chars]`;
-}
 function str(value) {
   return typeof value === "string" ? value : void 0;
 }
@@ -185,17 +261,14 @@ function isRecord(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 function compactPayload(value) {
-  if (typeof value === "string") return truncate(value);
-  if (Array.isArray(value)) return value.slice(0, 50).map(compactPayload);
-  if (!isRecord(value)) return value;
-  const output = {};
-  for (const [key, item] of Object.entries(value).slice(0, 100)) output[key] = compactPayload(item);
-  return output;
+  return value;
 }
 function toCodexPendingEvent(input, sequence, repo) {
   const promptStr = str(input.prompt);
   const lastAssistant = input.last_assistant_message;
   const toolInput = isRecord(input.tool_input) ? input.tool_input : void 0;
+  const toolResponse = input.tool_response;
+  const decision = observableDecisionFields(input, toolResponse);
   return {
     sequence,
     hookEventName: str(input.hook_event_name) ?? "Unknown",
@@ -204,16 +277,21 @@ function toCodexPendingEvent(input, sequence, repo) {
     model: str(input.model),
     cwd: str(input.cwd),
     receivedAt: Date.now(),
-    prompt: promptStr === void 0 ? void 0 : truncate(promptStr),
-    lastAssistantMessage: typeof lastAssistant === "string" ? truncate(lastAssistant) : lastAssistant === null ? null : void 0,
+    prompt: promptStr,
+    lastAssistantMessage: typeof lastAssistant === "string" ? lastAssistant : lastAssistant === null ? null : void 0,
     stopHookActive: typeof input.stop_hook_active === "boolean" ? input.stop_hook_active : void 0,
     toolName: str(input.tool_name),
     toolUseId: str(input.tool_use_id),
     toolInput: toolInput === void 0 ? void 0 : compactPayload(toolInput),
-    toolResponse: input.tool_response === void 0 ? void 0 : compactPayload(input.tool_response),
+    toolResponse: toolResponse === void 0 ? void 0 : compactPayload(toolResponse),
+    hookPayload: input,
+    ...decision,
     repoOwner: repo.owner,
     repoId: repo.repository,
-    repoFullName: `${repo.owner}/${repo.repository}`
+    repoFullName: `${repo.owner}/${repo.repository}`,
+    repoRemoteUrl: repo.remoteUrl,
+    repoBranch: repo.branch,
+    repoCommitSha: repo.commitSha
   };
 }
 

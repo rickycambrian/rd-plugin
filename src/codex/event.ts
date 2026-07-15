@@ -1,11 +1,6 @@
 import type { CodexHookEventRecord } from 'rickydata/kfdb';
 import type { HookInput } from '../lib/hook-input.js';
-
-const MAX_STRING = 32000;
-
-function truncate(value: string): string {
-  return value.length <= MAX_STRING ? value : `${value.slice(0, MAX_STRING)}...[truncated ${value.length - MAX_STRING} chars]`;
-}
+import { observableDecisionFields } from '../lib/decision.js';
 
 function str(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
@@ -17,12 +12,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** Bound the size/shape of arbitrary tool payloads before persisting them. */
 export function compactPayload(value: unknown): unknown {
-  if (typeof value === 'string') return truncate(value);
-  if (Array.isArray(value)) return value.slice(0, 50).map(compactPayload);
-  if (!isRecord(value)) return value;
-  const output: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value).slice(0, 100)) output[key] = compactPayload(item);
-  return output;
+  return value;
 }
 
 /**
@@ -36,6 +26,9 @@ export type CodexPendingEvent = CodexHookEventRecord & {
   repoOwner?: string;
   repoId?: string;
   repoFullName?: string;
+  repoRemoteUrl?: string;
+  repoBranch?: string;
+  repoCommitSha?: string;
 };
 
 /**
@@ -47,11 +40,13 @@ export type CodexPendingEvent = CodexHookEventRecord & {
 export function toCodexPendingEvent(
   input: HookInput,
   sequence: number,
-  repo: { owner: string; repository: string },
+  repo: { owner: string; repository: string; remoteUrl?: string; branch?: string; commitSha?: string },
 ): CodexPendingEvent {
   const promptStr = str(input.prompt);
   const lastAssistant = input.last_assistant_message;
   const toolInput = isRecord(input.tool_input) ? input.tool_input : undefined;
+  const toolResponse = input.tool_response;
+  const decision = observableDecisionFields(input, toolResponse);
   return {
     sequence,
     hookEventName: str(input.hook_event_name) ?? 'Unknown',
@@ -60,17 +55,22 @@ export function toCodexPendingEvent(
     model: str(input.model),
     cwd: str(input.cwd),
     receivedAt: Date.now(),
-    prompt: promptStr === undefined ? undefined : truncate(promptStr),
+    prompt: promptStr,
     lastAssistantMessage:
-      typeof lastAssistant === 'string' ? truncate(lastAssistant) : lastAssistant === null ? null : undefined,
+      typeof lastAssistant === 'string' ? lastAssistant : lastAssistant === null ? null : undefined,
     stopHookActive: typeof input.stop_hook_active === 'boolean' ? input.stop_hook_active : undefined,
     toolName: str(input.tool_name),
     toolUseId: str(input.tool_use_id),
     toolInput: toolInput === undefined ? undefined : compactPayload(toolInput),
-    toolResponse: input.tool_response === undefined ? undefined : compactPayload(input.tool_response),
+    toolResponse: toolResponse === undefined ? undefined : compactPayload(toolResponse),
+    hookPayload: input,
+    ...decision,
     repoOwner: repo.owner,
     repoId: repo.repository,
     repoFullName: `${repo.owner}/${repo.repository}`,
+    repoRemoteUrl: repo.remoteUrl,
+    repoBranch: repo.branch,
+    repoCommitSha: repo.commitSha,
   };
 }
 
@@ -93,9 +93,21 @@ export function normalizeCodexPendingEvent(raw: unknown, index: number): CodexPe
     toolUseId: str(e.toolUseId),
     toolInput: e.toolInput,
     toolResponse: e.toolResponse,
+    hookPayload: e.hookPayload,
+    decisionKind: e.decisionKind === 'ask_user' || e.decisionKind === 'tool_permission' ? e.decisionKind : undefined,
+    decisionQuestion: str(e.decisionQuestion),
+    decisionOptions: Array.isArray(e.decisionOptions) ? e.decisionOptions.filter((item): item is string => typeof item === 'string') : undefined,
+    decisionAnswer: str(e.decisionAnswer),
+    decisionPolicyRef: str(e.decisionPolicyRef),
     repoOwner: str(e.repoOwner),
     repoId: str(e.repoId),
     repoFullName: str(e.repoFullName),
+    repoRemoteUrl: str(e.repoRemoteUrl),
+    repoBranch: str(e.repoBranch),
+    repoCommitSha: str(e.repoCommitSha),
+    contextDelivery: e.contextDelivery && typeof e.contextDelivery === 'object'
+      ? e.contextDelivery as CodexPendingEvent['contextDelivery']
+      : undefined,
   };
 }
 
@@ -116,5 +128,12 @@ export function toTraceEvent(e: CodexPendingEvent): CodexHookEventRecord {
     toolUseId: e.toolUseId,
     toolInput: e.toolInput,
     toolResponse: e.toolResponse,
+    hookPayload: e.hookPayload,
+    decisionKind: e.decisionKind,
+    decisionQuestion: e.decisionQuestion,
+    decisionOptions: e.decisionOptions,
+    decisionAnswer: e.decisionAnswer,
+    decisionPolicyRef: e.decisionPolicyRef,
+    contextDelivery: e.contextDelivery,
   };
 }

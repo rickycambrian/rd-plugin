@@ -2881,12 +2881,12 @@ import path4 from "node:path";
 import { createHash as createHash6 } from "node:crypto";
 
 // src/lib/http.ts
-async function postJson(url, body, headers, timeoutMs = 15e3) {
+async function requestJson(url, body, headers, timeoutMs = 15e3, method = "POST") {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
-      method: "POST",
+      method,
       headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify(body),
       signal: controller.signal
@@ -2902,6 +2902,9 @@ async function postJson(url, body, headers, timeoutMs = 15e3) {
   } finally {
     clearTimeout(timer);
   }
+}
+function postJson(url, body, headers, timeoutMs = 15e3, method = "POST") {
+  return requestJson(url, body, headers, timeoutMs, method);
 }
 
 // node_modules/rickydata/dist/kfdb/agent-chat-trace.js
@@ -2921,6 +2924,171 @@ function uuidV5(name, namespace) {
 
 // node_modules/rickydata/dist/kfdb/claude-code-hook-trace.js
 import { createHash as createHash2, randomUUID as randomUUID2 } from "node:crypto";
+
+// node_modules/rickydata/dist/kfdb/rickydata-graph.js
+var GraphEntityKind;
+(function(GraphEntityKind2) {
+  GraphEntityKind2["Repository"] = "Repository";
+  GraphEntityKind2["Commit"] = "Commit";
+  GraphEntityKind2["File"] = "File";
+  GraphEntityKind2["Function"] = "Function";
+  GraphEntityKind2["TypeDefinition"] = "TypeDefinition";
+  GraphEntityKind2["TestCase"] = "TestCase";
+  GraphEntityKind2["Symbol"] = "Symbol";
+  GraphEntityKind2["Dependency"] = "Dependency";
+  GraphEntityKind2["GitHubIssue"] = "GitHubIssue";
+  GraphEntityKind2["GitHubProjectItem"] = "GitHubProjectItem";
+  GraphEntityKind2["GitHubPullRequest"] = "GitHubPullRequest";
+  GraphEntityKind2["RickydataWorkIntent"] = "RickydataWorkIntent";
+  GraphEntityKind2["RickydataAttempt"] = "RickydataAttempt";
+  GraphEntityKind2["RickydataRun"] = "RickydataRun";
+  GraphEntityKind2["RickydataPatch"] = "RickydataPatch";
+  GraphEntityKind2["RickydataProof"] = "RickydataProof";
+  GraphEntityKind2["CIJob"] = "CIJob";
+  GraphEntityKind2["AgentSession"] = "AgentSession";
+  GraphEntityKind2["AgentTraceEvent"] = "AgentTraceEvent";
+  GraphEntityKind2["RelaySnapshot"] = "RelaySnapshot";
+  GraphEntityKind2["KfdbProjection"] = "KfdbProjection";
+  GraphEntityKind2["UnderstandingSummary"] = "UnderstandingSummary";
+  GraphEntityKind2["CodeConcept"] = "CodeConcept";
+  GraphEntityKind2["DesignDecision"] = "DesignDecision";
+  GraphEntityKind2["RickydataProductEntity"] = "RickydataProductEntity";
+  GraphEntityKind2["RoadmapItem"] = "RoadmapItem";
+  GraphEntityKind2["EvidenceRecord"] = "EvidenceRecord";
+  GraphEntityKind2["PriorityScoreSnapshot"] = "PriorityScoreSnapshot";
+  GraphEntityKind2["AlignmentReviewItem"] = "AlignmentReviewItem";
+  GraphEntityKind2["DecisionRecord"] = "DecisionRecord";
+  GraphEntityKind2["RoadmapSnapshot"] = "RoadmapSnapshot";
+  GraphEntityKind2["AgentContextPack"] = "AgentContextPack";
+  GraphEntityKind2["EvidenceRequirement"] = "EvidenceRequirement";
+  GraphEntityKind2["EvidenceBundle"] = "EvidenceBundle";
+  GraphEntityKind2["ReleaseGate"] = "ReleaseGate";
+  GraphEntityKind2["LearningItem"] = "LearningItem";
+  GraphEntityKind2["BenchmarkRunProof"] = "BenchmarkRunProof";
+  GraphEntityKind2["DecisionPack"] = "DecisionPack";
+  GraphEntityKind2["DecisionSourceReceipt"] = "DecisionSourceReceipt";
+  GraphEntityKind2["ContextDeliveryReceipt"] = "ContextDeliveryReceipt";
+  GraphEntityKind2["DecisionObservation"] = "DecisionObservation";
+  GraphEntityKind2["ContentArtifact"] = "ContentArtifact";
+  GraphEntityKind2["OpenQuestion"] = "OpenQuestion";
+})(GraphEntityKind || (GraphEntityKind = {}));
+var GraphEdgeType;
+(function(GraphEdgeType2) {
+  GraphEdgeType2["Contains"] = "CONTAINS";
+  GraphEdgeType2["HasCommit"] = "HAS_COMMIT";
+  GraphEdgeType2["Defines"] = "DEFINES";
+  GraphEdgeType2["Imports"] = "IMPORTS";
+  GraphEdgeType2["Calls"] = "CALLS";
+  GraphEdgeType2["Tests"] = "TESTS";
+  GraphEdgeType2["DependsOn"] = "DEPENDS_ON";
+  GraphEdgeType2["Touches"] = "TOUCHES";
+  GraphEdgeType2["Mentions"] = "MENTIONS";
+  GraphEdgeType2["Implements"] = "IMPLEMENTS";
+  GraphEdgeType2["DerivedFromIssue"] = "DERIVED_FROM_ISSUE";
+  GraphEdgeType2["ProducedBy"] = "PRODUCED_BY";
+  GraphEdgeType2["Proves"] = "PROVES";
+  GraphEdgeType2["FailedBy"] = "FAILED_BY";
+  GraphEdgeType2["Supersedes"] = "SUPERSEDES";
+  GraphEdgeType2["Blocks"] = "BLOCKS";
+  GraphEdgeType2["Unblocks"] = "UNBLOCKS";
+  GraphEdgeType2["SupportedBy"] = "SUPPORTED_BY";
+  GraphEdgeType2["VerifiedBy"] = "VERIFIED_BY";
+  GraphEdgeType2["ProjectedToKfdb"] = "PROJECTED_TO_KFDB";
+  GraphEdgeType2["SyncedToRelay"] = "SYNCED_TO_RELAY";
+  GraphEdgeType2["Summarizes"] = "SUMMARIZES";
+  GraphEdgeType2["AboutProductEntity"] = "ABOUT_PRODUCT_ENTITY";
+  GraphEdgeType2["RequiresEvidence"] = "REQUIRES_EVIDENCE";
+  GraphEdgeType2["SatisfiesRequirement"] = "SATISFIES_REQUIREMENT";
+  GraphEdgeType2["BundlesEvidence"] = "BUNDLES_EVIDENCE";
+  GraphEdgeType2["CapturesPriority"] = "CAPTURES_PRIORITY";
+  GraphEdgeType2["ReviewedForAlignment"] = "REVIEWED_FOR_ALIGNMENT";
+  GraphEdgeType2["RecordsDecision"] = "RECORDS_DECISION";
+  GraphEdgeType2["SnapshotsRoadmap"] = "SNAPSHOTS_ROADMAP";
+  GraphEdgeType2["ProvidesContext"] = "PROVIDES_CONTEXT";
+  GraphEdgeType2["GatesRelease"] = "GATES_RELEASE";
+  GraphEdgeType2["CapturesLearning"] = "CAPTURES_LEARNING";
+  GraphEdgeType2["SatisfiesWorkIntent"] = "SATISFIES_WORK_INTENT";
+  GraphEdgeType2["ProvenByBenchmark"] = "PROVEN_BY_BENCHMARK";
+  GraphEdgeType2["GeneratedBySession"] = "GENERATED_BY_SESSION";
+  GraphEdgeType2["PacksSubject"] = "PACKS_SUBJECT";
+  GraphEdgeType2["IncludesArtifact"] = "INCLUDES_ARTIFACT";
+  GraphEdgeType2["HasSourceReceipt"] = "HAS_SOURCE_RECEIPT";
+  GraphEdgeType2["ScoresPack"] = "SCORES_PACK";
+  GraphEdgeType2["DecidesWithPack"] = "DECIDES_WITH_PACK";
+  GraphEdgeType2["DeliveredToSession"] = "DELIVERED_TO_SESSION";
+  GraphEdgeType2["DeliversPack"] = "DELIVERS_PACK";
+  GraphEdgeType2["ObservedInSession"] = "OBSERVED_IN_SESSION";
+  GraphEdgeType2["ObservedAgainstPack"] = "OBSERVED_AGAINST_PACK";
+})(GraphEdgeType || (GraphEdgeType = {}));
+var ENTITY_ID_PARTS = {
+  [GraphEntityKind.Repository]: ["canonical_repo_ref"],
+  [GraphEntityKind.Commit]: ["repo_id", "commit_sha"],
+  [GraphEntityKind.File]: ["repo_id", "commit_sha", "path", "content_hash"],
+  [GraphEntityKind.Function]: ["file_id", "function_name", "span_hash"],
+  [GraphEntityKind.TypeDefinition]: ["file_id", "type_name", "span_hash"],
+  [GraphEntityKind.TestCase]: ["file_id", "test_name", "span_hash"],
+  [GraphEntityKind.Symbol]: ["repo_id", "commit_sha", "path", "symbol_path", "span_hash"],
+  [GraphEntityKind.Dependency]: ["repo_id", "commit_sha", "dependency_name", "dependency_version"],
+  [GraphEntityKind.GitHubIssue]: ["repo_id", "issue_number"],
+  [GraphEntityKind.GitHubProjectItem]: ["repo_id", "project_item_id"],
+  [GraphEntityKind.GitHubPullRequest]: ["repo_id", "pull_request_number"],
+  [GraphEntityKind.RickydataWorkIntent]: ["repo_id", "intent_id"],
+  [GraphEntityKind.RickydataAttempt]: ["repo_id", "attempt_id"],
+  [GraphEntityKind.RickydataRun]: ["repo_id", "run_id"],
+  [GraphEntityKind.RickydataPatch]: ["repo_id", "patch_id"],
+  [GraphEntityKind.RickydataProof]: ["repo_id", "proof_id"],
+  [GraphEntityKind.CIJob]: ["repo_id", "provider", "run_id", "job_id"],
+  [GraphEntityKind.AgentSession]: ["repo_id", "session_id"],
+  [GraphEntityKind.AgentTraceEvent]: ["repo_id", "session_id", "event_id"],
+  [GraphEntityKind.RelaySnapshot]: ["repo_id", "remote", "ref_name", "object_id"],
+  [GraphEntityKind.KfdbProjection]: ["repo_id", "projection_id"],
+  [GraphEntityKind.UnderstandingSummary]: ["repo_id", "commit_sha", "scope", "summary_hash"],
+  [GraphEntityKind.CodeConcept]: ["repo_id", "concept_name", "source_hash"],
+  [GraphEntityKind.DesignDecision]: ["repo_id", "decision_id"],
+  [GraphEntityKind.RickydataProductEntity]: ["repo_id", "product_entity_id"],
+  [GraphEntityKind.RoadmapItem]: ["repo_id", "roadmap_item_id"],
+  [GraphEntityKind.EvidenceRecord]: ["repo_id", "evidence_record_id"],
+  [GraphEntityKind.PriorityScoreSnapshot]: ["repo_id", "subject_id", "snapshot_id"],
+  [GraphEntityKind.AlignmentReviewItem]: ["repo_id", "review_item_id"],
+  [GraphEntityKind.DecisionRecord]: ["repo_id", "decision_record_id"],
+  [GraphEntityKind.RoadmapSnapshot]: ["repo_id", "roadmap_snapshot_id"],
+  [GraphEntityKind.AgentContextPack]: ["repo_id", "context_pack_id"],
+  [GraphEntityKind.EvidenceRequirement]: ["repo_id", "evidence_requirement_id"],
+  [GraphEntityKind.EvidenceBundle]: ["repo_id", "evidence_bundle_id"],
+  [GraphEntityKind.ReleaseGate]: ["repo_id", "release_gate_id"],
+  [GraphEntityKind.LearningItem]: ["repo_id", "learning_item_id"],
+  [GraphEntityKind.BenchmarkRunProof]: ["repo_id", "benchmark_run_id", "proof_id"],
+  [GraphEntityKind.DecisionPack]: ["wallet_address", "pack_key"],
+  [GraphEntityKind.DecisionSourceReceipt]: ["decision_pack_id", "source", "receipt_key"],
+  [GraphEntityKind.ContextDeliveryReceipt]: ["session_node_id", "delivery_key"],
+  [GraphEntityKind.DecisionObservation]: ["session_node_id", "observation_key"],
+  [GraphEntityKind.ContentArtifact]: ["content_hash", "media_type"],
+  // memory-v1: same `(source_ref, question)` ⇒ same id ⇒ idempotent merge.
+  [GraphEntityKind.OpenQuestion]: ["source_ref", "question"]
+};
+
+// node_modules/rickydata/dist/kfdb/decision-pack-v1.js
+var CONTENT_ARTIFACT_MAX_INLINE_BYTES = 256 * 1024;
+var DecisionPackNodeLabel = {
+  DecisionPack: GraphEntityKind.DecisionPack,
+  DecisionSourceReceipt: GraphEntityKind.DecisionSourceReceipt,
+  ContextDeliveryReceipt: GraphEntityKind.ContextDeliveryReceipt,
+  DecisionObservation: GraphEntityKind.DecisionObservation,
+  ContentArtifact: GraphEntityKind.ContentArtifact
+};
+var DecisionPackEdgeType = {
+  PacksSubject: GraphEdgeType.PacksSubject,
+  IncludesArtifact: GraphEdgeType.IncludesArtifact,
+  HasSourceReceipt: GraphEdgeType.HasSourceReceipt,
+  ScoresPack: GraphEdgeType.ScoresPack,
+  DecidesWithPack: GraphEdgeType.DecidesWithPack,
+  DeliveredToSession: GraphEdgeType.DeliveredToSession,
+  DeliversPack: GraphEdgeType.DeliversPack,
+  ObservedInSession: GraphEdgeType.ObservedInSession,
+  ObservedAgainstPack: GraphEdgeType.ObservedAgainstPack
+};
+
+// node_modules/rickydata/dist/kfdb/claude-code-hook-trace.js
 var KG_NAMESPACE2 = uuidV52("rickydata-claude-code-hook-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
 var EXECUTION_KG_NAMESPACE2 = uuidV52("rickydata-execution-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
 function uuidV52(name, namespace) {
@@ -2963,129 +3131,6 @@ function uuidV54(name, namespace) {
   const hex = hash.subarray(0, 16).toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
-
-// node_modules/rickydata/dist/kfdb/rickydata-graph.js
-var GraphEntityKind;
-(function(GraphEntityKind2) {
-  GraphEntityKind2["Repository"] = "Repository";
-  GraphEntityKind2["Commit"] = "Commit";
-  GraphEntityKind2["File"] = "File";
-  GraphEntityKind2["Function"] = "Function";
-  GraphEntityKind2["TypeDefinition"] = "TypeDefinition";
-  GraphEntityKind2["TestCase"] = "TestCase";
-  GraphEntityKind2["Symbol"] = "Symbol";
-  GraphEntityKind2["Dependency"] = "Dependency";
-  GraphEntityKind2["GitHubIssue"] = "GitHubIssue";
-  GraphEntityKind2["GitHubProjectItem"] = "GitHubProjectItem";
-  GraphEntityKind2["GitHubPullRequest"] = "GitHubPullRequest";
-  GraphEntityKind2["RickydataWorkIntent"] = "RickydataWorkIntent";
-  GraphEntityKind2["RickydataAttempt"] = "RickydataAttempt";
-  GraphEntityKind2["RickydataRun"] = "RickydataRun";
-  GraphEntityKind2["RickydataPatch"] = "RickydataPatch";
-  GraphEntityKind2["RickydataProof"] = "RickydataProof";
-  GraphEntityKind2["CIJob"] = "CIJob";
-  GraphEntityKind2["AgentSession"] = "AgentSession";
-  GraphEntityKind2["AgentTraceEvent"] = "AgentTraceEvent";
-  GraphEntityKind2["RelaySnapshot"] = "RelaySnapshot";
-  GraphEntityKind2["KfdbProjection"] = "KfdbProjection";
-  GraphEntityKind2["UnderstandingSummary"] = "UnderstandingSummary";
-  GraphEntityKind2["CodeConcept"] = "CodeConcept";
-  GraphEntityKind2["DesignDecision"] = "DesignDecision";
-  GraphEntityKind2["RickydataProductEntity"] = "RickydataProductEntity";
-  GraphEntityKind2["RoadmapItem"] = "RoadmapItem";
-  GraphEntityKind2["EvidenceRecord"] = "EvidenceRecord";
-  GraphEntityKind2["PriorityScoreSnapshot"] = "PriorityScoreSnapshot";
-  GraphEntityKind2["AlignmentReviewItem"] = "AlignmentReviewItem";
-  GraphEntityKind2["DecisionRecord"] = "DecisionRecord";
-  GraphEntityKind2["RoadmapSnapshot"] = "RoadmapSnapshot";
-  GraphEntityKind2["AgentContextPack"] = "AgentContextPack";
-  GraphEntityKind2["EvidenceRequirement"] = "EvidenceRequirement";
-  GraphEntityKind2["EvidenceBundle"] = "EvidenceBundle";
-  GraphEntityKind2["ReleaseGate"] = "ReleaseGate";
-  GraphEntityKind2["LearningItem"] = "LearningItem";
-  GraphEntityKind2["BenchmarkRunProof"] = "BenchmarkRunProof";
-  GraphEntityKind2["OpenQuestion"] = "OpenQuestion";
-})(GraphEntityKind || (GraphEntityKind = {}));
-var GraphEdgeType;
-(function(GraphEdgeType2) {
-  GraphEdgeType2["Contains"] = "CONTAINS";
-  GraphEdgeType2["HasCommit"] = "HAS_COMMIT";
-  GraphEdgeType2["Defines"] = "DEFINES";
-  GraphEdgeType2["Imports"] = "IMPORTS";
-  GraphEdgeType2["Calls"] = "CALLS";
-  GraphEdgeType2["Tests"] = "TESTS";
-  GraphEdgeType2["DependsOn"] = "DEPENDS_ON";
-  GraphEdgeType2["Touches"] = "TOUCHES";
-  GraphEdgeType2["Mentions"] = "MENTIONS";
-  GraphEdgeType2["Implements"] = "IMPLEMENTS";
-  GraphEdgeType2["DerivedFromIssue"] = "DERIVED_FROM_ISSUE";
-  GraphEdgeType2["ProducedBy"] = "PRODUCED_BY";
-  GraphEdgeType2["Proves"] = "PROVES";
-  GraphEdgeType2["FailedBy"] = "FAILED_BY";
-  GraphEdgeType2["Supersedes"] = "SUPERSEDES";
-  GraphEdgeType2["Blocks"] = "BLOCKS";
-  GraphEdgeType2["Unblocks"] = "UNBLOCKS";
-  GraphEdgeType2["SupportedBy"] = "SUPPORTED_BY";
-  GraphEdgeType2["VerifiedBy"] = "VERIFIED_BY";
-  GraphEdgeType2["ProjectedToKfdb"] = "PROJECTED_TO_KFDB";
-  GraphEdgeType2["SyncedToRelay"] = "SYNCED_TO_RELAY";
-  GraphEdgeType2["Summarizes"] = "SUMMARIZES";
-  GraphEdgeType2["AboutProductEntity"] = "ABOUT_PRODUCT_ENTITY";
-  GraphEdgeType2["RequiresEvidence"] = "REQUIRES_EVIDENCE";
-  GraphEdgeType2["SatisfiesRequirement"] = "SATISFIES_REQUIREMENT";
-  GraphEdgeType2["BundlesEvidence"] = "BUNDLES_EVIDENCE";
-  GraphEdgeType2["CapturesPriority"] = "CAPTURES_PRIORITY";
-  GraphEdgeType2["ReviewedForAlignment"] = "REVIEWED_FOR_ALIGNMENT";
-  GraphEdgeType2["RecordsDecision"] = "RECORDS_DECISION";
-  GraphEdgeType2["SnapshotsRoadmap"] = "SNAPSHOTS_ROADMAP";
-  GraphEdgeType2["ProvidesContext"] = "PROVIDES_CONTEXT";
-  GraphEdgeType2["GatesRelease"] = "GATES_RELEASE";
-  GraphEdgeType2["CapturesLearning"] = "CAPTURES_LEARNING";
-  GraphEdgeType2["SatisfiesWorkIntent"] = "SATISFIES_WORK_INTENT";
-  GraphEdgeType2["ProvenByBenchmark"] = "PROVEN_BY_BENCHMARK";
-  GraphEdgeType2["GeneratedBySession"] = "GENERATED_BY_SESSION";
-})(GraphEdgeType || (GraphEdgeType = {}));
-var ENTITY_ID_PARTS = {
-  [GraphEntityKind.Repository]: ["canonical_repo_ref"],
-  [GraphEntityKind.Commit]: ["repo_id", "commit_sha"],
-  [GraphEntityKind.File]: ["repo_id", "commit_sha", "path", "content_hash"],
-  [GraphEntityKind.Function]: ["file_id", "function_name", "span_hash"],
-  [GraphEntityKind.TypeDefinition]: ["file_id", "type_name", "span_hash"],
-  [GraphEntityKind.TestCase]: ["file_id", "test_name", "span_hash"],
-  [GraphEntityKind.Symbol]: ["repo_id", "commit_sha", "path", "symbol_path", "span_hash"],
-  [GraphEntityKind.Dependency]: ["repo_id", "commit_sha", "dependency_name", "dependency_version"],
-  [GraphEntityKind.GitHubIssue]: ["repo_id", "issue_number"],
-  [GraphEntityKind.GitHubProjectItem]: ["repo_id", "project_item_id"],
-  [GraphEntityKind.GitHubPullRequest]: ["repo_id", "pull_request_number"],
-  [GraphEntityKind.RickydataWorkIntent]: ["repo_id", "intent_id"],
-  [GraphEntityKind.RickydataAttempt]: ["repo_id", "attempt_id"],
-  [GraphEntityKind.RickydataRun]: ["repo_id", "run_id"],
-  [GraphEntityKind.RickydataPatch]: ["repo_id", "patch_id"],
-  [GraphEntityKind.RickydataProof]: ["repo_id", "proof_id"],
-  [GraphEntityKind.CIJob]: ["repo_id", "provider", "run_id", "job_id"],
-  [GraphEntityKind.AgentSession]: ["repo_id", "session_id"],
-  [GraphEntityKind.AgentTraceEvent]: ["repo_id", "session_id", "event_id"],
-  [GraphEntityKind.RelaySnapshot]: ["repo_id", "remote", "ref_name", "object_id"],
-  [GraphEntityKind.KfdbProjection]: ["repo_id", "projection_id"],
-  [GraphEntityKind.UnderstandingSummary]: ["repo_id", "commit_sha", "scope", "summary_hash"],
-  [GraphEntityKind.CodeConcept]: ["repo_id", "concept_name", "source_hash"],
-  [GraphEntityKind.DesignDecision]: ["repo_id", "decision_id"],
-  [GraphEntityKind.RickydataProductEntity]: ["repo_id", "product_entity_id"],
-  [GraphEntityKind.RoadmapItem]: ["repo_id", "roadmap_item_id"],
-  [GraphEntityKind.EvidenceRecord]: ["repo_id", "evidence_record_id"],
-  [GraphEntityKind.PriorityScoreSnapshot]: ["repo_id", "subject_id", "snapshot_id"],
-  [GraphEntityKind.AlignmentReviewItem]: ["repo_id", "review_item_id"],
-  [GraphEntityKind.DecisionRecord]: ["repo_id", "decision_record_id"],
-  [GraphEntityKind.RoadmapSnapshot]: ["repo_id", "roadmap_snapshot_id"],
-  [GraphEntityKind.AgentContextPack]: ["repo_id", "context_pack_id"],
-  [GraphEntityKind.EvidenceRequirement]: ["repo_id", "evidence_requirement_id"],
-  [GraphEntityKind.EvidenceBundle]: ["repo_id", "evidence_bundle_id"],
-  [GraphEntityKind.ReleaseGate]: ["repo_id", "release_gate_id"],
-  [GraphEntityKind.LearningItem]: ["repo_id", "learning_item_id"],
-  [GraphEntityKind.BenchmarkRunProof]: ["repo_id", "benchmark_run_id", "proof_id"],
-  // memory-v1: same `(source_ref, question)` ⇒ same id ⇒ idempotent merge.
-  [GraphEntityKind.OpenQuestion]: ["source_ref", "question"]
-};
 
 // node_modules/rickydata/dist/kfdb/session-link.js
 import { createHash as createHash5 } from "node:crypto";
@@ -3174,6 +3219,7 @@ function splitEntry(dir, full, entry, operations) {
       const body = { ...entry.body, operations: ops };
       const request = {
         url: entry.url,
+        method: entry.method,
         body,
         requiresBearer: entry.requiresBearer,
         requiresDerive: entry.requiresDerive,
@@ -3276,7 +3322,7 @@ async function drainQueue(auth, limit = 500, options = {}) {
       }
       attempted += 1;
       try {
-        const response = await postJson(entry.url, entry.body, headers, GRAPH_WRITE_TIMEOUT_MS);
+        const response = await postJson(entry.url, entry.body, headers, GRAPH_WRITE_TIMEOUT_MS, entry.method ?? "POST");
         if (response.ok) {
           fs4.rmSync(full, { force: true });
           result.sent += 1;

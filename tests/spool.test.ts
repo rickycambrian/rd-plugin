@@ -55,7 +55,9 @@ describe('initial_prompt event fallback (transcript-unavailable parity)', () => 
     // summary undefined mimics the remote TEE workspace where the transcript JSONL isn't parseable.
     const traces = buildTraces({ walletAddress: WALLET, claudeSessionId: 'sess-xyz', events: syntheticEvents('Fix the flaky test in auth.spec.ts'), summary: undefined });
     const written = writeSpool(dir, traces);
-    const body = JSON.parse(fs.readFileSync(written[0], 'utf8'));
+    const body = written
+      .map((file) => JSON.parse(fs.readFileSync(file, 'utf8')))
+      .find((record) => record.recordType === 'graph_batch');
     const node = sessionNodeOf(body.graphOperations);
     expect((node.properties as Record<string, unknown>).initial_prompt).toEqual({ String: 'Fix the flaky test in auth.spec.ts' });
   });
@@ -79,10 +81,10 @@ describe('initial_prompt event fallback (transcript-unavailable parity)', () => 
     expect(traces[0].initialPrompt).toBeUndefined();
   });
 
-  it('sanitizes the fallback the same way (trim + 4000-char cap)', () => {
+  it('trims but does not truncate the complete fallback prompt', () => {
     const long = `  ${'a'.repeat(5000)}  `;
     const traces = buildTraces({ walletAddress: WALLET, claudeSessionId: 'sess-xyz', events: syntheticEvents(long), summary: undefined });
-    expect(traces[0].initialPrompt).toBe('a'.repeat(4000));
+    expect(traces[0].initialPrompt).toBe('a'.repeat(5000));
   });
 });
 
@@ -102,18 +104,19 @@ describe('spoolFileName', () => {
 });
 
 describe('writeSpool', () => {
-  it('writes one file per trace with spoolVersion:2 and the trace body', () => {
+  it('writes bounded v3 artifact preludes before graph-only records', () => {
     const dir = tmp();
     const traces = fixtureTraces();
     const written = writeSpool(dir, traces);
-    expect(written.length).toBe(traces.length);
-
-    const body = JSON.parse(fs.readFileSync(written[0], 'utf8'));
-    expect(body.spoolVersion).toBe(2);
-    expect(body.walletAddress).toBe(WALLET);
-    expect(body.claudeSessionId).toBe('sess-abc');
-    expect(Array.isArray(body.events)).toBe(true);
-    expect(Array.isArray(body.graphOperations)).toBe(true);
+    const bodies = written.map((file) => JSON.parse(fs.readFileSync(file, 'utf8')));
+    const artifacts = bodies.filter((body) => body.recordType === 'content_artifact');
+    const graphs = bodies.filter((body) => body.recordType === 'graph_batch');
+    expect(artifacts.length).toBeGreaterThan(0);
+    expect(graphs).toHaveLength(traces.length);
+    expect(bodies.every((body) => body.spoolVersion === 3 && body.walletAddress === WALLET)).toBe(true);
+    expect(artifacts.every((body) => body.artifact.ifAbsent === true)).toBe(true);
+    expect(graphs.every((body) => Array.isArray(body.graphOperations) && body.events === undefined)).toBe(true);
+    expect(written.slice(0, artifacts.length).every((file) => path.basename(file).startsWith('artifact-'))).toBe(true);
   });
 
   it('embeds graphOperations identical to what the direct sink would write', () => {
@@ -121,21 +124,23 @@ describe('writeSpool', () => {
     const traces = fixtureTraces();
     const written = writeSpool(dir, traces);
 
-    for (let i = 0; i < traces.length; i++) {
-      const body = JSON.parse(fs.readFileSync(written[i], 'utf8'));
-      const trace = traces[i];
+    const bodies = written.map((file) => JSON.parse(fs.readFileSync(file, 'utf8')));
+    for (const trace of traces) {
+      const graphBodies = bodies.filter((body) => body.recordType === 'graph_batch' && body.turnIndex === trace.turnIndex);
+      expect(graphBodies.length).toBeGreaterThan(0);
+      const graphOperations = graphBodies.flatMap((body) => body.graphOperations);
 
       // Deep-equal to the exact direct-sink graph ops for this same trace.
       const expected = buildGraphOperations(trace.walletAddress, [trace]);
-      expect(body.graphOperations).toEqual(expected);
+      expect(graphOperations).toEqual(expected);
 
       // Only create_node / create_edge ops travel in the spool.
-      for (const op of body.graphOperations) {
+      for (const op of graphOperations) {
         expect(['create_node', 'create_edge']).toContain(op.operation);
       }
 
       // The ClaudeCodeSession node carries the deterministic id remote-proof derives.
-      const sessionNode = body.graphOperations.find(
+      const sessionNode = graphOperations.find(
         (op: Record<string, unknown>) => op.operation === 'create_node' && op.label === 'ClaudeCodeSession',
       );
       expect(sessionNode).toBeTruthy();
@@ -149,10 +154,10 @@ describe('writeSpool', () => {
       );
 
       // D6: a HarnessSessionKey merge node + a SAME_SESSION edge from the session node.
-      const harnessNode = body.graphOperations.find(
+      const harnessNode = graphOperations.find(
         (op: Record<string, unknown>) => op.operation === 'create_node' && op.label === 'HarnessSessionKey',
       );
-      const sameSessionEdge = body.graphOperations.find(
+      const sameSessionEdge = graphOperations.find(
         (op: Record<string, unknown>) => op.operation === 'create_edge' && op.edge_type === 'SAME_SESSION',
       );
       expect(harnessNode).toBeTruthy();
@@ -160,6 +165,19 @@ describe('writeSpool', () => {
       expect(sameSessionEdge.from).toBe(sessionNode.id);
       expect(sameSessionEdge.to).toBe(harnessNode.id);
     }
+  });
+
+  it('keeps every record below the gateway 2 MiB ceiling under worst-case JSON escaping', () => {
+    const dir = tmp();
+    const traces = buildTraces({
+      walletAddress: WALLET,
+      claudeSessionId: 'sess-control-bytes',
+      events: syntheticEvents('\0'.repeat(300_000), 'sess-control-bytes'),
+      summary: undefined,
+    });
+    const written = writeSpool(dir, traces);
+    expect(written.length).toBeGreaterThan(2);
+    for (const file of written) expect(fs.statSync(file).size).toBeLessThanOrEqual(2 * 1024 * 1024);
   });
 
   it('leaves no .tmp files behind (atomic tmp + rename)', () => {

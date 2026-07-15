@@ -1,21 +1,24 @@
 import path from 'node:path';
 import type { ClaudeCodeHookTrace } from 'rickydata/kfdb';
 import { writeFileAtomic } from './fsutil.js';
-import { buildGraphOperations, batchOperations } from './graph.js';
+import { buildGraphWriteBundle, batchOperations } from './graph.js';
+import {
+  artifactSpoolFileName,
+  contentArtifactRecord,
+  graphBatchRecord,
+  serializeBoundedSpoolRecord,
+  splitGraphBatchByBytes,
+  type ContentArtifactSpoolRecord,
+  type GraphBatchSpoolRecord,
+  type SpoolRecordIdentity,
+} from './spool-record.js';
 
 /**
- * Body written to a spool file. `spoolVersion` 2 adds `graphOperations`: the
- * exact schema-v3 `/api/v1/write` operations the direct sink would write for
- * this trace (ClaudeCodeHookTrace ops + D6 session-link ops). The gateway
- * ingestor forwards these verbatim, so a session captured through the gateway
- * yields byte-identical `ClaudeCodeSession` node ids to one captured locally.
- * Every version-1 field is retained unchanged — the gateway still reads the
- * trace itself to write the legacy `/api/v1/plugin/*` stream.
+ * Version 3 is a two-record protocol: one bounded immutable-artifact prelude
+ * per artifact, followed by graph-only batches. Raw observables are never
+ * duplicated in the graph record. The gateway accepts v1/v2 for compatibility.
  */
-export interface SpoolBody extends ClaudeCodeHookTrace {
-  spoolVersion: 2;
-  graphOperations: Array<Record<string, unknown>>;
-}
+export type SpoolBody = ContentArtifactSpoolRecord | GraphBatchSpoolRecord;
 
 export function spoolFileName(claudeSessionId: string, seq: number, batchIndex = 0): string {
   const safe = String(claudeSessionId || 'unknown').replace(/[^A-Za-z0-9_.-]/g, '_');
@@ -35,13 +38,27 @@ export function spoolFileName(claudeSessionId: string, seq: number, batchIndex =
 export function writeSpool(spoolDir: string, traces: ClaudeCodeHookTrace[]): string[] {
   const written: string[] = [];
   for (const trace of traces) {
-    const graphOperations = buildGraphOperations(trace.walletAddress, [trace]);
-    const batches = batchOperations(graphOperations);
-    if (batches.length === 0) batches.push([]);
+    const bundle = buildGraphWriteBundle(trace.walletAddress, [trace]);
+    const identity: SpoolRecordIdentity = {
+      traceKind: 'claude_code',
+      walletAddress: trace.walletAddress,
+      traceSessionId: trace.claudeSessionId,
+      turnIndex: trace.turnIndex,
+    };
+    const artifacts = [...new Map(bundle.contentArtifacts.map((artifact) => [artifact.key, artifact])).values()];
+    artifacts.forEach((artifact, artifactIndex) => {
+      const body = contentArtifactRecord(identity, artifact);
+      const filePath = path.join(spoolDir, artifactSpoolFileName(identity, artifact, artifactIndex));
+      writeFileAtomic(filePath, serializeBoundedSpoolRecord(body));
+      written.push(filePath);
+    });
+    const countBatches = batchOperations(bundle.operations);
+    if (countBatches.length === 0) countBatches.push([]);
+    const batches = countBatches.flatMap((batch) => splitGraphBatchByBytes(identity, batch));
     batches.forEach((batch, batchIndex) => {
-      const body: SpoolBody = { ...trace, spoolVersion: 2, graphOperations: batch };
+      const body = graphBatchRecord(identity, batch);
       const filePath = path.join(spoolDir, spoolFileName(trace.claudeSessionId, trace.turnIndex, batchIndex));
-      writeFileAtomic(filePath, JSON.stringify(body));
+      writeFileAtomic(filePath, serializeBoundedSpoolRecord(body));
       written.push(filePath);
     });
   }

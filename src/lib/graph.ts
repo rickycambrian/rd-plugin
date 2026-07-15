@@ -1,5 +1,5 @@
 import type { ClaudeCodeHookTrace } from 'rickydata/kfdb';
-import { buildClaudeCodeHookTraceOperations, buildSessionLinkOperations, claudeCodeSessionNodeId } from 'rickydata/kfdb';
+import { buildClaudeCodeHookTraceWriteBundle, buildSessionLinkOperations, claudeCodeSessionNodeId, type ImmutableContentArtifactWrite } from 'rickydata/kfdb';
 import { postJson } from './http.js';
 import type { DeriveHeaders } from './derive.js';
 
@@ -29,9 +29,19 @@ type GraphOp = Record<string, unknown>;
  * cannot drift from the builder's id recipe.
  */
 export function buildGraphOperations(walletAddress: string, traces: ClaudeCodeHookTrace[]): GraphOp[] {
+  return buildGraphWriteBundle(walletAddress, traces).operations;
+}
+
+export function buildGraphWriteBundle(walletAddress: string, traces: ClaudeCodeHookTrace[]): {
+  operations: GraphOp[];
+  contentArtifacts: ImmutableContentArtifactWrite[];
+} {
   const operations: GraphOp[] = [];
+  const contentArtifacts: ImmutableContentArtifactWrite[] = [];
   for (const trace of traces) {
-    operations.push(...buildClaudeCodeHookTraceOperations(trace));
+    const bundle = buildClaudeCodeHookTraceWriteBundle(trace);
+    operations.push(...bundle.operations);
+    contentArtifacts.push(...bundle.contentArtifacts);
     const fromNodeId = claudeCodeSessionNodeId(trace);
     operations.push(
       ...buildSessionLinkOperations({
@@ -42,7 +52,7 @@ export function buildGraphOperations(walletAddress: string, traces: ClaudeCodeHo
       }),
     );
   }
-  return operations;
+  return { operations, contentArtifacts };
 }
 
 /**

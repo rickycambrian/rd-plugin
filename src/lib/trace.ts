@@ -32,7 +32,7 @@ function firstDefined<T>(values: Array<T | undefined>): T | undefined {
 /**
  * Fallback initial prompt from the captured events: the first UserPromptSubmit's
  * prompt text, sanitized identically to the transcript-derived path
- * (`trim().slice(0, 4000)`). Used when the transcript is unavailable/unparseable
+ * (`trim()`, without truncation). Used when the transcript is unavailable/unparseable
  * — notably in the remote gateway workspace, where the transcript JSONL isn't
  * present, so the SDK builder would otherwise omit initial_prompt and break
  * direct-vs-gateway parity. Returns undefined if no UserPromptSubmit carries text.
@@ -41,7 +41,7 @@ function firstUserPromptText(events: PendingEvent[]): string | undefined {
   for (const e of events) {
     if (e.hookEventName === 'UserPromptSubmit' && typeof e.prompt === 'string') {
       const text = e.prompt.trim();
-      if (text) return text.slice(0, 4000);
+      if (text) return text;
     }
   }
   return undefined;
@@ -68,6 +68,7 @@ export function buildTraces(input: BuildTracesInput): ClaudeCodeHookTrace[] {
   // Transcript wins (it sees the true first prompt across parent sessions); the
   // event fallback keeps the field present when the transcript is unavailable.
   const sessionInitialPrompt = firstDefined([summary?.initialPrompt, firstUserPromptText(events)]);
+  const repository = events.find((event) => event.repository)?.repository;
 
   return groups.map((group, index) => {
     const turnModel = firstDefined([...group.map((e) => e.model), sessionModel]);
@@ -87,6 +88,7 @@ export function buildTraces(input: BuildTracesInput): ClaudeCodeHookTrace[] {
     if (sessionInitialPrompt !== undefined) trace.initialPrompt = sessionInitialPrompt;
     if (summary?.filesChanged !== undefined) trace.filesChanged = summary.filesChanged;
     if (summary?.parentSessionId !== undefined) trace.parentSessionId = summary.parentSessionId;
+    if (repository !== undefined) trace.repository = repository;
     return trace;
   });
 }

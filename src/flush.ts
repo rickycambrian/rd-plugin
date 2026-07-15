@@ -172,6 +172,8 @@ async function flushDirect(
     messages: result.messages,
     tools: result.tools,
     graphOk: result.graphOk,
+    artifactOk: result.artifactOk,
+    artifacts: result.artifacts,
     legacyOk: result.legacyOk,
   });
 

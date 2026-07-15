@@ -104,7 +104,7 @@ export function parseTranscriptSummary(transcriptPath: string): TranscriptSummar
 
     if (!summary.initialPrompt) {
       const prompt = isRealUserPrompt(entry);
-      if (prompt) summary.initialPrompt = prompt.slice(0, 4000);
+      if (prompt) summary.initialPrompt = prompt;
     }
 
     if (entry.type === 'assistant') {
@@ -173,7 +173,7 @@ export function transcriptToEvents(transcriptPath: string): PendingEvent[] {
 
     const prompt = isRealUserPrompt(entry);
     if (prompt) {
-      push({ hookEventName: 'UserPromptSubmit', cwd: lastCwd, model: lastModel, prompt: prompt.slice(0, 32000) });
+      push({ hookEventName: 'UserPromptSubmit', cwd: lastCwd, model: lastModel, prompt });
       continue;
     }
 

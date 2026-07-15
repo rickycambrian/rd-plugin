@@ -4,6 +4,20 @@ export interface OwnedRepository {
   owner: string;
   repository: string;
   remoteUrl: string;
+  branch?: string;
+  commitSha?: string;
+}
+
+function git(cwd: string, args: string[]): Promise<string> {
+  return new Promise((resolve) => {
+    try {
+      execFile('git', ['-C', cwd, ...args], { timeout: 5000 }, (error, stdout) => {
+        resolve(error ? '' : String(stdout).trim());
+      });
+    } catch {
+      resolve('');
+    }
+  });
 }
 
 /**
@@ -34,18 +48,20 @@ export function parseGitHubRemote(remoteUrl: string): { owner: string; repositor
  */
 export async function ownedRepository(cwd: string | undefined, owners: string[] | null): Promise<OwnedRepository | null> {
   if (!cwd) return null;
-  const remoteUrl = await new Promise<string>((resolve) => {
-    try {
-      execFile('git', ['-C', cwd, 'remote', 'get-url', 'origin'], { timeout: 5000 }, (error, stdout) => {
-        resolve(error ? '' : String(stdout).trim());
-      });
-    } catch {
-      resolve('');
-    }
-  });
+  const [remoteUrl, branch, commitSha] = await Promise.all([
+    git(cwd, ['remote', 'get-url', 'origin']),
+    git(cwd, ['branch', '--show-current']),
+    git(cwd, ['rev-parse', 'HEAD']),
+  ]);
   const parsed = parseGitHubRemote(remoteUrl);
   if (!parsed) return null;
   const owner = parsed.owner.toLowerCase();
   if (owners !== null && !owners.includes(owner)) return null;
-  return { owner, repository: parsed.repository, remoteUrl };
+  return {
+    owner,
+    repository: parsed.repository,
+    remoteUrl,
+    ...(branch ? { branch } : {}),
+    ...(/^[0-9a-f]{40}$/i.test(commitSha) ? { commitSha: commitSha.toLowerCase() } : {}),
+  };
 }

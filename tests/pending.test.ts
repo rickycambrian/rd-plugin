@@ -26,11 +26,31 @@ describe('toPendingEvent', () => {
     expect(toPendingEvent(hook({ tool_name: 'Read', tool_response: 'y', tool_output: 'x' }), 0).toolResponse).toBe('y');
   });
 
-  it('truncates very large strings', () => {
+  it('retains complete observable strings and the exact hook envelope', () => {
     const big = 'a'.repeat(40000);
     const event = toPendingEvent(hook({ hook_event_name: 'UserPromptSubmit', prompt: big }), 0);
-    expect((event.prompt ?? '').length).toBeLessThan(big.length);
-    expect(event.prompt).toContain('truncated');
+    expect(event.prompt).toBe(big);
+    expect(event.hookPayload).toEqual(expect.objectContaining({ prompt: big }));
+  });
+
+  it('normalizes AskUser and permission decisions with exact displayed options and answers', () => {
+    const ask = toPendingEvent(hook({
+      tool_name: 'AskUserQuestion', tool_use_id: 'ask-1',
+      tool_input: { questions: [{ question: 'Ship?', options: [{ label: 'Yes' }, { label: 'No' }] }] },
+      tool_response: { answers: { 'Ship?': 'Yes' } },
+    }), 0);
+    expect(ask).toMatchObject({
+      decisionKind: 'ask_user', decisionQuestion: 'Ship?', decisionOptions: ['Yes', 'No'], decisionAnswer: 'Yes',
+    });
+
+    const permission = toPendingEvent(hook({
+      hook_event_name: 'PermissionRequest', tool_name: 'Bash', permission_decision: 'allow',
+      permission_decision_reason: 'policy:deploy', permission_suggestions: [{ type: 'allow' }, { type: 'deny' }],
+    }), 1);
+    expect(permission).toMatchObject({
+      decisionKind: 'tool_permission', decisionAnswer: 'allow', decisionPolicyRef: 'policy:deploy',
+    });
+    expect(permission.decisionOptions).toEqual(['allow', 'deny']);
   });
 });
 

@@ -51,6 +51,16 @@ export function buildCodexTraces(input: BuildCodexTracesInput): CodexHookTrace[]
   const groups = groupTurns(events);
   const sessionModel = firstDefined(events.map((e) => e.model));
   const sessionCwd = firstDefined(events.map((e) => e.cwd));
+  const repository = events.find((e) => e.repoFullName)?.repoFullName
+    ? {
+        owner: events.find((e) => e.repoOwner)?.repoOwner ?? '',
+        repository: events.find((e) => e.repoId)?.repoId ?? '',
+        fullName: events.find((e) => e.repoFullName)?.repoFullName ?? '',
+        remoteUrl: events.find((e) => e.repoRemoteUrl)?.repoRemoteUrl ?? '',
+        branch: events.find((e) => e.repoBranch)?.repoBranch,
+        commitSha: events.find((e) => e.repoCommitSha)?.repoCommitSha,
+      }
+    : undefined;
 
   return groups.map((group, index) => {
     const turnIndex = index + 1;
@@ -69,6 +79,7 @@ export function buildCodexTraces(input: BuildCodexTracesInput): CodexHookTrace[]
       startedAt: group.events[0].receivedAt,
       completedAt: group.events[group.events.length - 1].receivedAt,
       events: group.events.map(toTraceEvent),
+      repository,
     };
     return trace;
   });

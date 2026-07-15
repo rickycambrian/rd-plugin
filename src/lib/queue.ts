@@ -10,6 +10,8 @@ import type { DeriveHeaders } from './derive.js';
 /** A queued write is a fully-formed request the drain can replay verbatim. */
 export interface QueuedRequest {
   url: string;
+  /** Old queue entries omit this and replay as POST. */
+  method?: 'POST' | 'PUT';
   body: unknown;
   /** Auth headers are re-derived at drain time; only non-secret headers persist. */
   requiresBearer: boolean;
@@ -183,6 +185,7 @@ function splitEntry(dir: string, full: string, entry: QueuedRequest, operations:
       const body = { ...(entry.body as Record<string, unknown>), operations: ops };
       const request: QueuedRequest = {
         url: entry.url,
+        method: entry.method,
         body,
         requiresBearer: entry.requiresBearer,
         requiresDerive: entry.requiresDerive,
@@ -296,7 +299,7 @@ export async function drainQueue(auth: DrainAuth, limit = 500, options: DrainOpt
         // Replay at the graph-write timeout (60s), NOT postJson's 15s default: a
         // drain that replays at a shorter timeout than the writer that queued the
         // entry can never make progress on batches the server takes ~10-20s to run.
-        const response = await postJson(entry.url, entry.body, headers, GRAPH_WRITE_TIMEOUT_MS);
+        const response = await postJson(entry.url, entry.body, headers, GRAPH_WRITE_TIMEOUT_MS, entry.method ?? 'POST');
         if (response.ok) {
           fs.rmSync(full, { force: true });
           result.sent += 1;

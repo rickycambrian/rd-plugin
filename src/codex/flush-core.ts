@@ -131,5 +131,7 @@ async function flushCodexDirect(
     sessionId: codexSessionId,
     ops: result.ops,
     graphOk: result.graphOk,
+    artifactOk: result.artifactOk,
+    artifacts: result.artifacts,
   });
 }

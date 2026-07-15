@@ -2,7 +2,7 @@
 
 **Your Claude Code sessions, in your own knowledge graph.**
 
-rd-plugin is a Claude Code plugin from [rickydata](https://rickydata.org) that captures your coding sessions — prompts, turns, tool calls, files touched, commands run — into a wallet-scoped knowledge graph on KFDB, encrypted with a key only your wallet can derive. It behaves identically whether you run Claude Code on your own machine or on the rickydata remote TEE stack.
+rd-plugin is a Claude Code plugin from [rickydata](https://rickydata.org) that captures your coding sessions — complete observable prompts, turns, tool calls and results, files touched, commands run, and repository/branch/commit identity — into a wallet-scoped knowledge graph on KFDB, encrypted with a key only your wallet can derive. It behaves identically whether you run Claude Code on your own machine or on the rickydata remote TEE stack. Hidden model reasoning is never part of this contract.
 
 Nothing is captured until you connect a wallet. Turn it off any time.
 
@@ -36,7 +36,9 @@ rickydata_home's compiled context-pack endpoint. Claude receives the complete
 budgeted pack for the current repository: invariants, verification gates,
 in-progress work, wiki claims and sources, lessons, prior human decisions,
 known traps, open questions, the exact selected-item manifest, exclusions, and
-source-health status. The injected block carries a reproducibility hash. If Home
+source-health status. The exact rendered block is stored as an immutable private
+content artifact and linked to the session through a `ContextDeliveryReceipt`.
+The injected block carries a reproducibility hash. If Home
 is unavailable, the plugin labels its smaller answer-sheet fallback
 `INCOMPLETE`; it never presents fallback context as complete.
 
@@ -45,14 +47,19 @@ is unavailable, the plugin labels its smaller answer-sheet fallback
 rd-plugin captures in two stages so it never slows you down:
 
 1. A fast appender runs on each hook event and just buffers the event.
-2. A detached flusher runs at the end of a turn/session, builds a schema-v3 trace, and writes it to the configured **sink**.
+2. A detached flusher runs at the end of a turn/session, builds a schema-v3 trace, stores exact observables as immutable content-addressed artifacts, and writes graph references only after those artifact writes succeed or are durably queued.
+
+AskUser and permission interactions also emit canonical `DecisionObservation`
+records with the exact question, options displayed, and selected answer when the
+hook supplies one. This lets later DecisionPacks join a human touch point to the
+session and evidence actually visible at that moment.
 
 ### Sink modes
 
 | Sink | When | Where keys live |
 |---|---|---|
 | `direct` | Local machine, wallet configured | On your machine; writes go straight to KFDB with your derived key |
-| `gateway` | rickydata remote TEE stack | Never in the sandbox — the plugin only writes spool files; a trusted gateway ingestor performs the wallet-scoped write server-side |
+| `gateway` | rickydata remote TEE stack | Never in the sandbox — the plugin writes bounded artifact-first spool records; a trusted gateway ingestor validates and performs the wallet-scoped artifact and graph writes server-side |
 | `off` | No wallet, or explicitly disabled | Nowhere — hooks no-op |
 
 Resolution order: env `RICKYDATA_KG_SINK` > config `sink` > auto (`direct` when a wallet key is present, otherwise `off`).

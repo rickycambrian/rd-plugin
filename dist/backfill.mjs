@@ -989,7 +989,7 @@ function parseTranscriptSummary(transcriptPath) {
     if (entry.type === "user" || entry.type === "assistant") summary.messageCount += 1;
     if (!summary.initialPrompt) {
       const prompt = isRealUserPrompt(entry);
-      if (prompt) summary.initialPrompt = prompt.slice(0, 4e3);
+      if (prompt) summary.initialPrompt = prompt;
     }
     if (entry.type === "assistant") {
       if (typeof entry.message?.model === "string" && entry.message.model) summary.model = entry.message.model;
@@ -1042,7 +1042,7 @@ function transcriptToEvents(transcriptPath) {
     if (entry.type === "assistant" && typeof entry.message?.model === "string") lastModel = entry.message.model;
     const prompt = isRealUserPrompt(entry);
     if (prompt) {
-      push({ hookEventName: "UserPromptSubmit", cwd: lastCwd, model: lastModel, prompt: prompt.slice(0, 32e3) });
+      push({ hookEventName: "UserPromptSubmit", cwd: lastCwd, model: lastModel, prompt });
       continue;
     }
     if (entry.type === "assistant" && Array.isArray(entry.message?.content)) {
@@ -3126,7 +3126,7 @@ function firstUserPromptText(events) {
   for (const e of events) {
     if (e.hookEventName === "UserPromptSubmit" && typeof e.prompt === "string") {
       const text = e.prompt.trim();
-      if (text) return text.slice(0, 4e3);
+      if (text) return text;
     }
   }
   return void 0;
@@ -3137,6 +3137,7 @@ function buildTraces(input) {
   const sessionModel = firstDefined([summary?.model, ...events.map((e) => e.model)]);
   const sessionCwd = firstDefined([summary?.cwd, ...events.map((e) => e.cwd)]);
   const sessionInitialPrompt = firstDefined([summary?.initialPrompt, firstUserPromptText(events)]);
+  const repository = events.find((event) => event.repository)?.repository;
   return groups.map((group, index) => {
     const turnModel = firstDefined([...group.map((e) => e.model), sessionModel]);
     const turnCwd = firstDefined([...group.map((e) => e.cwd), sessionCwd]);
@@ -3155,6 +3156,7 @@ function buildTraces(input) {
     if (sessionInitialPrompt !== void 0) trace.initialPrompt = sessionInitialPrompt;
     if (summary?.filesChanged !== void 0) trace.filesChanged = summary.filesChanged;
     if (summary?.parentSessionId !== void 0) trace.parentSessionId = summary.parentSessionId;
+    if (repository !== void 0) trace.repository = repository;
     return trace;
   });
 }
@@ -3175,12 +3177,193 @@ function uuidV5(name, namespace) {
 }
 
 // node_modules/rickydata/dist/kfdb/claude-code-hook-trace.js
-import { createHash as createHash2, randomUUID as randomUUID2 } from "node:crypto";
-var KG_NAMESPACE2 = uuidV52("rickydata-claude-code-hook-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
-var EXECUTION_KG_NAMESPACE2 = uuidV52("rickydata-execution-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
-var TRACE_SCHEMA_VERSION = 3;
-function stableHash(input) {
-  return createHash2("sha256").update(input).digest("hex");
+import { createHash as createHash4, randomUUID as randomUUID2 } from "node:crypto";
+
+// node_modules/rickydata/dist/kfdb/decision-pack-v1.js
+import { createHash as createHash3 } from "node:crypto";
+
+// node_modules/rickydata/dist/kfdb/rickydata-graph.js
+import { createHash as createHash2 } from "node:crypto";
+var RICKYDATA_GRAPH_NAMESPACE = "2f3e8ab8-8684-5c6a-9fd2-c5467b94251d";
+var RICKYDATA_GRAPH_SCHEMA_VERSION = "rickydata.repo_execution_graph.v1";
+var GraphEntityKind;
+(function(GraphEntityKind2) {
+  GraphEntityKind2["Repository"] = "Repository";
+  GraphEntityKind2["Commit"] = "Commit";
+  GraphEntityKind2["File"] = "File";
+  GraphEntityKind2["Function"] = "Function";
+  GraphEntityKind2["TypeDefinition"] = "TypeDefinition";
+  GraphEntityKind2["TestCase"] = "TestCase";
+  GraphEntityKind2["Symbol"] = "Symbol";
+  GraphEntityKind2["Dependency"] = "Dependency";
+  GraphEntityKind2["GitHubIssue"] = "GitHubIssue";
+  GraphEntityKind2["GitHubProjectItem"] = "GitHubProjectItem";
+  GraphEntityKind2["GitHubPullRequest"] = "GitHubPullRequest";
+  GraphEntityKind2["RickydataWorkIntent"] = "RickydataWorkIntent";
+  GraphEntityKind2["RickydataAttempt"] = "RickydataAttempt";
+  GraphEntityKind2["RickydataRun"] = "RickydataRun";
+  GraphEntityKind2["RickydataPatch"] = "RickydataPatch";
+  GraphEntityKind2["RickydataProof"] = "RickydataProof";
+  GraphEntityKind2["CIJob"] = "CIJob";
+  GraphEntityKind2["AgentSession"] = "AgentSession";
+  GraphEntityKind2["AgentTraceEvent"] = "AgentTraceEvent";
+  GraphEntityKind2["RelaySnapshot"] = "RelaySnapshot";
+  GraphEntityKind2["KfdbProjection"] = "KfdbProjection";
+  GraphEntityKind2["UnderstandingSummary"] = "UnderstandingSummary";
+  GraphEntityKind2["CodeConcept"] = "CodeConcept";
+  GraphEntityKind2["DesignDecision"] = "DesignDecision";
+  GraphEntityKind2["RickydataProductEntity"] = "RickydataProductEntity";
+  GraphEntityKind2["RoadmapItem"] = "RoadmapItem";
+  GraphEntityKind2["EvidenceRecord"] = "EvidenceRecord";
+  GraphEntityKind2["PriorityScoreSnapshot"] = "PriorityScoreSnapshot";
+  GraphEntityKind2["AlignmentReviewItem"] = "AlignmentReviewItem";
+  GraphEntityKind2["DecisionRecord"] = "DecisionRecord";
+  GraphEntityKind2["RoadmapSnapshot"] = "RoadmapSnapshot";
+  GraphEntityKind2["AgentContextPack"] = "AgentContextPack";
+  GraphEntityKind2["EvidenceRequirement"] = "EvidenceRequirement";
+  GraphEntityKind2["EvidenceBundle"] = "EvidenceBundle";
+  GraphEntityKind2["ReleaseGate"] = "ReleaseGate";
+  GraphEntityKind2["LearningItem"] = "LearningItem";
+  GraphEntityKind2["BenchmarkRunProof"] = "BenchmarkRunProof";
+  GraphEntityKind2["DecisionPack"] = "DecisionPack";
+  GraphEntityKind2["DecisionSourceReceipt"] = "DecisionSourceReceipt";
+  GraphEntityKind2["ContextDeliveryReceipt"] = "ContextDeliveryReceipt";
+  GraphEntityKind2["DecisionObservation"] = "DecisionObservation";
+  GraphEntityKind2["ContentArtifact"] = "ContentArtifact";
+  GraphEntityKind2["OpenQuestion"] = "OpenQuestion";
+})(GraphEntityKind || (GraphEntityKind = {}));
+var GraphEdgeType;
+(function(GraphEdgeType2) {
+  GraphEdgeType2["Contains"] = "CONTAINS";
+  GraphEdgeType2["HasCommit"] = "HAS_COMMIT";
+  GraphEdgeType2["Defines"] = "DEFINES";
+  GraphEdgeType2["Imports"] = "IMPORTS";
+  GraphEdgeType2["Calls"] = "CALLS";
+  GraphEdgeType2["Tests"] = "TESTS";
+  GraphEdgeType2["DependsOn"] = "DEPENDS_ON";
+  GraphEdgeType2["Touches"] = "TOUCHES";
+  GraphEdgeType2["Mentions"] = "MENTIONS";
+  GraphEdgeType2["Implements"] = "IMPLEMENTS";
+  GraphEdgeType2["DerivedFromIssue"] = "DERIVED_FROM_ISSUE";
+  GraphEdgeType2["ProducedBy"] = "PRODUCED_BY";
+  GraphEdgeType2["Proves"] = "PROVES";
+  GraphEdgeType2["FailedBy"] = "FAILED_BY";
+  GraphEdgeType2["Supersedes"] = "SUPERSEDES";
+  GraphEdgeType2["Blocks"] = "BLOCKS";
+  GraphEdgeType2["Unblocks"] = "UNBLOCKS";
+  GraphEdgeType2["SupportedBy"] = "SUPPORTED_BY";
+  GraphEdgeType2["VerifiedBy"] = "VERIFIED_BY";
+  GraphEdgeType2["ProjectedToKfdb"] = "PROJECTED_TO_KFDB";
+  GraphEdgeType2["SyncedToRelay"] = "SYNCED_TO_RELAY";
+  GraphEdgeType2["Summarizes"] = "SUMMARIZES";
+  GraphEdgeType2["AboutProductEntity"] = "ABOUT_PRODUCT_ENTITY";
+  GraphEdgeType2["RequiresEvidence"] = "REQUIRES_EVIDENCE";
+  GraphEdgeType2["SatisfiesRequirement"] = "SATISFIES_REQUIREMENT";
+  GraphEdgeType2["BundlesEvidence"] = "BUNDLES_EVIDENCE";
+  GraphEdgeType2["CapturesPriority"] = "CAPTURES_PRIORITY";
+  GraphEdgeType2["ReviewedForAlignment"] = "REVIEWED_FOR_ALIGNMENT";
+  GraphEdgeType2["RecordsDecision"] = "RECORDS_DECISION";
+  GraphEdgeType2["SnapshotsRoadmap"] = "SNAPSHOTS_ROADMAP";
+  GraphEdgeType2["ProvidesContext"] = "PROVIDES_CONTEXT";
+  GraphEdgeType2["GatesRelease"] = "GATES_RELEASE";
+  GraphEdgeType2["CapturesLearning"] = "CAPTURES_LEARNING";
+  GraphEdgeType2["SatisfiesWorkIntent"] = "SATISFIES_WORK_INTENT";
+  GraphEdgeType2["ProvenByBenchmark"] = "PROVEN_BY_BENCHMARK";
+  GraphEdgeType2["GeneratedBySession"] = "GENERATED_BY_SESSION";
+  GraphEdgeType2["PacksSubject"] = "PACKS_SUBJECT";
+  GraphEdgeType2["IncludesArtifact"] = "INCLUDES_ARTIFACT";
+  GraphEdgeType2["HasSourceReceipt"] = "HAS_SOURCE_RECEIPT";
+  GraphEdgeType2["ScoresPack"] = "SCORES_PACK";
+  GraphEdgeType2["DecidesWithPack"] = "DECIDES_WITH_PACK";
+  GraphEdgeType2["DeliveredToSession"] = "DELIVERED_TO_SESSION";
+  GraphEdgeType2["DeliversPack"] = "DELIVERS_PACK";
+  GraphEdgeType2["ObservedInSession"] = "OBSERVED_IN_SESSION";
+  GraphEdgeType2["ObservedAgainstPack"] = "OBSERVED_AGAINST_PACK";
+})(GraphEdgeType || (GraphEdgeType = {}));
+var ENTITY_ID_PARTS = {
+  [GraphEntityKind.Repository]: ["canonical_repo_ref"],
+  [GraphEntityKind.Commit]: ["repo_id", "commit_sha"],
+  [GraphEntityKind.File]: ["repo_id", "commit_sha", "path", "content_hash"],
+  [GraphEntityKind.Function]: ["file_id", "function_name", "span_hash"],
+  [GraphEntityKind.TypeDefinition]: ["file_id", "type_name", "span_hash"],
+  [GraphEntityKind.TestCase]: ["file_id", "test_name", "span_hash"],
+  [GraphEntityKind.Symbol]: ["repo_id", "commit_sha", "path", "symbol_path", "span_hash"],
+  [GraphEntityKind.Dependency]: ["repo_id", "commit_sha", "dependency_name", "dependency_version"],
+  [GraphEntityKind.GitHubIssue]: ["repo_id", "issue_number"],
+  [GraphEntityKind.GitHubProjectItem]: ["repo_id", "project_item_id"],
+  [GraphEntityKind.GitHubPullRequest]: ["repo_id", "pull_request_number"],
+  [GraphEntityKind.RickydataWorkIntent]: ["repo_id", "intent_id"],
+  [GraphEntityKind.RickydataAttempt]: ["repo_id", "attempt_id"],
+  [GraphEntityKind.RickydataRun]: ["repo_id", "run_id"],
+  [GraphEntityKind.RickydataPatch]: ["repo_id", "patch_id"],
+  [GraphEntityKind.RickydataProof]: ["repo_id", "proof_id"],
+  [GraphEntityKind.CIJob]: ["repo_id", "provider", "run_id", "job_id"],
+  [GraphEntityKind.AgentSession]: ["repo_id", "session_id"],
+  [GraphEntityKind.AgentTraceEvent]: ["repo_id", "session_id", "event_id"],
+  [GraphEntityKind.RelaySnapshot]: ["repo_id", "remote", "ref_name", "object_id"],
+  [GraphEntityKind.KfdbProjection]: ["repo_id", "projection_id"],
+  [GraphEntityKind.UnderstandingSummary]: ["repo_id", "commit_sha", "scope", "summary_hash"],
+  [GraphEntityKind.CodeConcept]: ["repo_id", "concept_name", "source_hash"],
+  [GraphEntityKind.DesignDecision]: ["repo_id", "decision_id"],
+  [GraphEntityKind.RickydataProductEntity]: ["repo_id", "product_entity_id"],
+  [GraphEntityKind.RoadmapItem]: ["repo_id", "roadmap_item_id"],
+  [GraphEntityKind.EvidenceRecord]: ["repo_id", "evidence_record_id"],
+  [GraphEntityKind.PriorityScoreSnapshot]: ["repo_id", "subject_id", "snapshot_id"],
+  [GraphEntityKind.AlignmentReviewItem]: ["repo_id", "review_item_id"],
+  [GraphEntityKind.DecisionRecord]: ["repo_id", "decision_record_id"],
+  [GraphEntityKind.RoadmapSnapshot]: ["repo_id", "roadmap_snapshot_id"],
+  [GraphEntityKind.AgentContextPack]: ["repo_id", "context_pack_id"],
+  [GraphEntityKind.EvidenceRequirement]: ["repo_id", "evidence_requirement_id"],
+  [GraphEntityKind.EvidenceBundle]: ["repo_id", "evidence_bundle_id"],
+  [GraphEntityKind.ReleaseGate]: ["repo_id", "release_gate_id"],
+  [GraphEntityKind.LearningItem]: ["repo_id", "learning_item_id"],
+  [GraphEntityKind.BenchmarkRunProof]: ["repo_id", "benchmark_run_id", "proof_id"],
+  [GraphEntityKind.DecisionPack]: ["wallet_address", "pack_key"],
+  [GraphEntityKind.DecisionSourceReceipt]: ["decision_pack_id", "source", "receipt_key"],
+  [GraphEntityKind.ContextDeliveryReceipt]: ["session_node_id", "delivery_key"],
+  [GraphEntityKind.DecisionObservation]: ["session_node_id", "observation_key"],
+  [GraphEntityKind.ContentArtifact]: ["content_hash", "media_type"],
+  // memory-v1: same `(source_ref, question)` ⇒ same id ⇒ idempotent merge.
+  [GraphEntityKind.OpenQuestion]: ["source_ref", "question"]
+};
+function deriveRickydataGraphId(entity, parts) {
+  const expected = ENTITY_ID_PARTS[entity];
+  if (!expected)
+    throw new Error(`Unsupported Rickydata graph entity kind: ${entity}`);
+  if (parts.length !== expected.length) {
+    throw new Error(`${entity} expected ${expected.length} parts (${expected.join(", ")}) but received ${parts.length}`);
+  }
+  const normalizedParts = parts.map((part, idx) => {
+    const normalized = String(part).trim();
+    if (normalized.length === 0) {
+      throw new Error(`${entity} id part '${expected[idx]}' at position ${idx} must not be empty`);
+    }
+    return normalized;
+  });
+  return uuidV52(`${RICKYDATA_GRAPH_SCHEMA_VERSION}:${[entity, ...normalizedParts].join("")}`, RICKYDATA_GRAPH_NAMESPACE);
+}
+function deriveRickydataGraphEdgeId(from, edgeType, to) {
+  const normalizedFrom = from.trim();
+  const normalizedTo = to.trim();
+  if (!normalizedFrom || !normalizedTo)
+    throw new Error("edge endpoints must not be empty");
+  return uuidV52(`${RICKYDATA_GRAPH_SCHEMA_VERSION}:edge:${normalizedFrom}${edgeType}${normalizedTo}`, RICKYDATA_GRAPH_NAMESPACE);
+}
+function rickydataGraphValue(input) {
+  if (input === null || input === void 0)
+    return { Null: null };
+  if (typeof input === "boolean")
+    return { Boolean: input };
+  if (typeof input === "number")
+    return Number.isInteger(input) ? { Integer: input } : { Float: input };
+  if (Array.isArray(input))
+    return { Array: input.map(rickydataGraphValue) };
+  if (typeof input === "object") {
+    return {
+      Object: Object.fromEntries(Object.entries(input).map(([key, value3]) => [key, rickydataGraphValue(value3)]))
+    };
+  }
+  return { String: String(input) };
 }
 function uuidV52(name, namespace) {
   const ns = Buffer.from(namespace.replace(/-/g, ""), "hex");
@@ -3192,11 +3375,242 @@ function uuidV52(name, namespace) {
   const hex = hash.subarray(0, 16).toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
+
+// node_modules/rickydata/dist/kfdb/decision-pack-v1.js
+var DECISION_PACK_CONTRACT_VERSION = "rickydata.decision_pack.v1";
+var CONTENT_ARTIFACT_CONTRACT_VERSION = "content-artifact/v1";
+var CONTENT_ARTIFACT_MANIFEST_CONTRACT_VERSION = "content-artifact-manifest/v1";
+var CONTENT_ARTIFACT_MAX_INLINE_BYTES = 256 * 1024;
+var DecisionPackNodeLabel = {
+  DecisionPack: GraphEntityKind.DecisionPack,
+  DecisionSourceReceipt: GraphEntityKind.DecisionSourceReceipt,
+  ContextDeliveryReceipt: GraphEntityKind.ContextDeliveryReceipt,
+  DecisionObservation: GraphEntityKind.DecisionObservation,
+  ContentArtifact: GraphEntityKind.ContentArtifact
+};
+var DecisionPackEdgeType = {
+  PacksSubject: GraphEdgeType.PacksSubject,
+  IncludesArtifact: GraphEdgeType.IncludesArtifact,
+  HasSourceReceipt: GraphEdgeType.HasSourceReceipt,
+  ScoresPack: GraphEdgeType.ScoresPack,
+  DecidesWithPack: GraphEdgeType.DecidesWithPack,
+  DeliveredToSession: GraphEdgeType.DeliveredToSession,
+  DeliversPack: GraphEdgeType.DeliversPack,
+  ObservedInSession: GraphEdgeType.ObservedInSession,
+  ObservedAgainstPack: GraphEdgeType.ObservedAgainstPack
+};
+function sha256Hex2(content) {
+  return createHash3("sha256").update(content, "utf8").digest("hex");
+}
+function assertNonEmpty(value3, field) {
+  const normalized = value3.trim();
+  if (!normalized)
+    throw new Error(`${field} must not be empty`);
+  return normalized;
+}
+function assertHash(value3, field) {
+  if (!/^sha256:[0-9a-f]{64}$/.test(value3))
+    throw new Error(`${field} must be sha256:<64 lowercase hex>`);
+}
+function node(id, label, properties) {
+  return {
+    operation: "create_node",
+    id,
+    label,
+    mode: "merge",
+    properties: Object.fromEntries(Object.entries({ contract_version: DECISION_PACK_CONTRACT_VERSION, ...properties }).filter(([, value3]) => value3 !== void 0).map(([key, value3]) => [key, rickydataGraphValue(value3)]))
+  };
+}
+function edge(from, edgeType, to, properties = {}) {
+  assertNonEmpty(from, "edge.from");
+  assertNonEmpty(to, "edge.to");
+  return {
+    operation: "create_edge",
+    id: deriveRickydataGraphEdgeId(from, edgeType, to),
+    from,
+    to,
+    edge_type: edgeType,
+    properties: Object.fromEntries(Object.entries({ contract_version: DECISION_PACK_CONTRACT_VERSION, ...properties }).filter(([, value3]) => value3 !== void 0).map(([key, value3]) => [key, rickydataGraphValue(value3)]))
+  };
+}
+function deriveContentArtifactId(contentHash, mediaType) {
+  assertHash(contentHash, "contentHash");
+  return deriveRickydataGraphId(GraphEntityKind.ContentArtifact, [contentHash, assertNonEmpty(mediaType, "mediaType")]);
+}
+function buildContentArtifactOperations(input) {
+  const content = input.content;
+  const mediaType = assertNonEmpty(input.mediaType, "mediaType");
+  const observableKind = assertNonEmpty(input.observableKind, "observableKind");
+  const hex = sha256Hex2(content);
+  const contentHash = `sha256:${hex}`;
+  const uri = `content-artifact:${contentHash}`;
+  const artifactId = deriveContentArtifactId(contentHash, mediaType);
+  const byteLength = Buffer.byteLength(content, "utf8");
+  const ref = {
+    artifactId,
+    uri,
+    contentHash,
+    byteLength,
+    mediaType,
+    observableKind,
+    storage: "kfdb-private-kv",
+    encryption: { scheme: "kfdb-s2d", scope: "wallet-private" },
+    chunkCount: 1,
+    ...input.sourceRef ? { sourceRef: input.sourceRef } : {}
+  };
+  const chunks = splitUtf8(content, CONTENT_ARTIFACT_MAX_INLINE_BYTES);
+  ref.chunkCount = chunks.length;
+  const chunkArtifacts = chunks.map((chunk) => {
+    const chunkHash = `sha256:${sha256Hex2(chunk)}`;
+    return {
+      key: `content-artifact:${chunkHash}`,
+      ifAbsent: true,
+      value: {
+        contractVersion: CONTENT_ARTIFACT_CONTRACT_VERSION,
+        contentHash: chunkHash,
+        byteLength: Buffer.byteLength(chunk, "utf8"),
+        content: chunk
+      }
+    };
+  });
+  const artifact = chunks.length === 1 ? chunkArtifacts[0] : {
+    key: uri,
+    ifAbsent: true,
+    value: {
+      contractVersion: CONTENT_ARTIFACT_MANIFEST_CONTRACT_VERSION,
+      contentHash,
+      byteLength,
+      chunks: chunkArtifacts.map((chunk) => ({
+        uri: chunk.key,
+        contentHash: chunk.value.contentHash,
+        byteLength: chunk.value.byteLength
+      }))
+    }
+  };
+  const artifacts = chunks.length === 1 ? [artifact] : [...chunkArtifacts, artifact];
+  return {
+    ref,
+    artifact,
+    operations: [node(artifactId, DecisionPackNodeLabel.ContentArtifact, {
+      uri,
+      content_hash: contentHash,
+      byte_length: byteLength,
+      media_type: mediaType,
+      observable_kind: observableKind,
+      storage: ref.storage,
+      encryption_scheme: ref.encryption.scheme,
+      encryption_scope: ref.encryption.scope,
+      observable_only: true,
+      chunk_count: ref.chunkCount,
+      source_ref: input.sourceRef
+    })],
+    artifacts
+  };
+}
+function splitUtf8(content, maxBytes) {
+  if (Buffer.byteLength(content, "utf8") <= maxBytes)
+    return [content];
+  const chunks = [];
+  let current = "";
+  let currentBytes = 0;
+  for (const character of content) {
+    const bytes = Buffer.byteLength(character, "utf8");
+    if (currentBytes + bytes > maxBytes && current) {
+      chunks.push(current);
+      current = "";
+      currentBytes = 0;
+    }
+    current += character;
+    currentBytes += bytes;
+  }
+  if (current || chunks.length === 0)
+    chunks.push(current);
+  if (chunks.length > 4096)
+    throw new Error("observable content exceeds the 4096-chunk artifact limit");
+  return chunks;
+}
+function buildContextDeliveryReceiptOperations(input) {
+  if (input.packHash)
+    assertHash(input.packHash, "packHash");
+  const receiptId = deriveRickydataGraphId(GraphEntityKind.ContextDeliveryReceipt, [
+    assertNonEmpty(input.session.nodeId, "session.nodeId"),
+    assertNonEmpty(input.deliveryKey, "deliveryKey")
+  ]);
+  const operations = [
+    node(receiptId, DecisionPackNodeLabel.ContextDeliveryReceipt, {
+      delivery_key: input.deliveryKey,
+      session_label: input.session.label,
+      pack_id: input.packId,
+      pack_hash: input.packHash,
+      rendered_artifact: input.renderedArtifact,
+      rendered_context_hash: input.renderedArtifact.contentHash,
+      rendered_byte_length: input.renderedArtifact.byteLength,
+      interface: input.interface,
+      coverage_status: input.coverageStatus,
+      omissions: input.omissions,
+      delivered_at: input.deliveredAt
+    }),
+    edge(receiptId, GraphEdgeType.DeliveredToSession, input.session.nodeId, { session_label: input.session.label }),
+    edge(receiptId, GraphEdgeType.IncludesArtifact, input.renderedArtifact.artifactId, { role: "rendered-context" })
+  ];
+  if (input.packId)
+    operations.push(edge(receiptId, GraphEdgeType.DeliversPack, input.packId));
+  return { receiptId, operations };
+}
+function buildDecisionObservationOperations(input) {
+  const observationId = deriveRickydataGraphId(GraphEntityKind.DecisionObservation, [
+    assertNonEmpty(input.session.nodeId, "session.nodeId"),
+    assertNonEmpty(input.observationKey, "observationKey")
+  ]);
+  const operations = [
+    node(observationId, DecisionPackNodeLabel.DecisionObservation, {
+      observation_key: input.observationKey,
+      kind: input.kind,
+      interface: input.interface,
+      actor: input.actor,
+      question_artifact: input.questionArtifact,
+      options_artifact: input.optionsArtifact,
+      rationale_artifact: input.rationaleArtifact,
+      options_presented: input.optionsPresented,
+      selected_option: input.selectedOption,
+      policy_ref: input.policyRef,
+      observed_at: input.observedAt,
+      pack_id: input.packId
+    }),
+    edge(observationId, GraphEdgeType.ObservedInSession, input.session.nodeId, { session_label: input.session.label }),
+    edge(observationId, GraphEdgeType.IncludesArtifact, input.questionArtifact.artifactId, { role: "question" })
+  ];
+  if (input.optionsArtifact)
+    operations.push(edge(observationId, GraphEdgeType.IncludesArtifact, input.optionsArtifact.artifactId, { role: "options" }));
+  if (input.rationaleArtifact)
+    operations.push(edge(observationId, GraphEdgeType.IncludesArtifact, input.rationaleArtifact.artifactId, { role: "rationale" }));
+  if (input.packId)
+    operations.push(edge(observationId, GraphEdgeType.ObservedAgainstPack, input.packId));
+  return { observationId, operations };
+}
+
+// node_modules/rickydata/dist/kfdb/claude-code-hook-trace.js
+var KG_NAMESPACE2 = uuidV53("rickydata-claude-code-hook-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
+var EXECUTION_KG_NAMESPACE2 = uuidV53("rickydata-execution-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
+var TRACE_SCHEMA_VERSION = 3;
+function stableHash(input) {
+  return createHash4("sha256").update(input).digest("hex");
+}
+function uuidV53(name, namespace) {
+  const ns = Buffer.from(namespace.replace(/-/g, ""), "hex");
+  if (ns.length !== 16)
+    throw new Error("Invalid UUID namespace");
+  const hash = createHash4("sha1").update(Buffer.concat([ns, Buffer.from(name)])).digest();
+  hash[6] = hash[6] & 15 | 80;
+  hash[8] = hash[8] & 63 | 128;
+  const hex = hash.subarray(0, 16).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 function deterministicId(kind, parts) {
-  return uuidV52(`${kind}:${parts.map((p) => String(p)).join(":")}`, KG_NAMESPACE2);
+  return uuidV53(`${kind}:${parts.map((p) => String(p)).join(":")}`, KG_NAMESPACE2);
 }
 function deterministicExecutionId(kind, parts) {
-  return uuidV52(`${kind}:${parts.map((p) => String(p)).join(":")}`, EXECUTION_KG_NAMESPACE2);
+  return uuidV53(`${kind}:${parts.map((p) => String(p)).join(":")}`, EXECUTION_KG_NAMESPACE2);
 }
 function value(input) {
   if (input === null || input === void 0)
@@ -3283,7 +3697,7 @@ function summarizeCommand(command) {
     command_preview: firstLine.slice(0, 240)
   };
 }
-function eventData(event) {
+function eventData(event, contentArtifacts) {
   return {
     hookEventName: event.hookEventName,
     claudeSessionId: event.claudeSessionId,
@@ -3305,7 +3719,18 @@ function eventData(event) {
     exitCode: event.exitCode,
     stdout: event.stdout === void 0 ? void 0 : summarizePayload(event.stdout),
     stderr: event.stderr === void 0 ? void 0 : summarizePayload(event.stderr),
-    durationMs: event.durationMs
+    durationMs: event.durationMs,
+    contentArtifacts,
+    decisionKind: event.decisionKind,
+    decisionQuestion: event.decisionQuestion,
+    decisionOptions: event.decisionOptions,
+    decisionAnswer: event.decisionAnswer,
+    decisionPolicyRef: event.decisionPolicyRef,
+    hookPayload: event.hookPayload === void 0 ? void 0 : summarizePayload(event.hookPayload),
+    contextDelivery: event.contextDelivery === void 0 ? void 0 : {
+      ...event.contextDelivery,
+      renderedContent: summarizePayload(event.contextDelivery.renderedContent)
+    }
   };
 }
 function addWorkspaceOperations(operations, sourceNodeId, cwd) {
@@ -3333,7 +3758,7 @@ function addWorkspaceOperations(operations, sourceNodeId, cwd) {
   });
 }
 function addCodeFileOperations(operations, sourceNodeId, paths) {
-  [...new Set(paths)].slice(0, 50).forEach((filePath) => {
+  [...new Set(paths)].forEach((filePath) => {
     const fileNodeId = deterministicExecutionId("CodeFile", [filePath]);
     operations.push({
       operation: "create_node",
@@ -3383,7 +3808,7 @@ function claudeCodeSessionNodeId(trace) {
   const wallet = trace.walletAddress.toLowerCase();
   return deterministicId("ClaudeCodeSession", [wallet, trace.agentId, trace.sessionId, trace.claudeSessionId]);
 }
-function buildClaudeCodeHookTraceOperations(trace) {
+function buildClaudeCodeHookTraceWriteBundle(trace) {
   const wallet = trace.walletAddress.toLowerCase();
   const sessionNodeId = claudeCodeSessionNodeId(trace);
   const turnNodeId = deterministicId("ClaudeCodeTurn", [wallet, trace.agentId, trace.sessionId, trace.turnIndex, trace.claudeSessionId]);
@@ -3392,7 +3817,7 @@ function buildClaudeCodeHookTraceOperations(trace) {
   const model = trace.model ?? "";
   const modelNodeId = model ? deterministicExecutionId("Model", ["anthropic", model]) : null;
   const executionEngineNodeId = deterministicExecutionId("ExecutionEngine", ["claude-code"]);
-  const sessionProperties = { agent_id: value(trace.agentId), session_id: value(trace.sessionId), claude_session_id: value(trace.claudeSessionId), wallet_address: value(wallet), source: value("claude-code-hooks"), schema_version: value(TRACE_SCHEMA_VERSION), updated_at: value(trace.completedAt) };
+  const sessionProperties = { agent_id: value(trace.agentId), session_id: value(trace.sessionId), claude_session_id: value(trace.claudeSessionId), wallet_address: value(wallet), source: value("claude-code-hooks"), schema_version: value(TRACE_SCHEMA_VERSION), updated_at: value(trace.completedAt), repository: value(trace.repository) };
   if (trace.filesChanged !== void 0)
     sessionProperties.files_changed = value(trace.filesChanged);
   if (trace.parentSessionId !== void 0)
@@ -3403,20 +3828,89 @@ function buildClaudeCodeHookTraceOperations(trace) {
     { operation: "create_node", id: walletNodeId, label: "WalletTenant", mode: "merge", properties: { wallet_address: value(wallet), schema_version: value(TRACE_SCHEMA_VERSION) } },
     { operation: "create_node", id: agentNodeId, label: "Agent", mode: "merge", properties: { agent_id: value(trace.agentId), schema_version: value(TRACE_SCHEMA_VERSION) } },
     { operation: "create_node", id: sessionNodeId, label: "ClaudeCodeSession", mode: "merge", properties: sessionProperties },
-    { operation: "create_node", id: turnNodeId, label: "ClaudeCodeTurn", mode: "merge", properties: { agent_id: value(trace.agentId), session_id: value(trace.sessionId), claude_session_id: value(trace.claudeSessionId), turn_index: value(trace.turnIndex), model: value(model), provider: value("anthropic"), execution_engine: value("claude-code"), cwd: value(trace.cwd ?? ""), started_at: value(trace.startedAt), completed_at: value(trace.completedAt), event_count: value(trace.events.length), schema_version: value(TRACE_SCHEMA_VERSION) } },
+    { operation: "create_node", id: turnNodeId, label: "ClaudeCodeTurn", mode: "merge", properties: { agent_id: value(trace.agentId), session_id: value(trace.sessionId), claude_session_id: value(trace.claudeSessionId), turn_index: value(trace.turnIndex), model: value(model), provider: value("anthropic"), execution_engine: value("claude-code"), cwd: value(trace.cwd ?? ""), started_at: value(trace.startedAt), completed_at: value(trace.completedAt), event_count: value(trace.events.length), schema_version: value(TRACE_SCHEMA_VERSION), repository: value(trace.repository) } },
     { operation: "create_edge", id: deterministicExecutionId("OWNS_EXECUTION_SESSION", [walletNodeId, sessionNodeId]), from: walletNodeId, to: sessionNodeId, edge_type: "OWNS_EXECUTION_SESSION", properties: { source: value("claude-code-hooks") } },
     { operation: "create_edge", id: deterministicExecutionId("EXECUTES_AGENT", [sessionNodeId, agentNodeId]), from: sessionNodeId, to: agentNodeId, edge_type: "EXECUTES_AGENT", properties: { agent_id: value(trace.agentId) } },
     { operation: "create_edge", id: deterministicId("HAS_CLAUDE_CODE_TURN", [sessionNodeId, turnNodeId]), from: sessionNodeId, to: turnNodeId, edge_type: "HAS_CLAUDE_CODE_TURN", properties: { turn_index: value(trace.turnIndex) } },
     { operation: "create_node", id: executionEngineNodeId, label: "ExecutionEngine", mode: "merge", properties: { execution_engine: value("claude-code"), schema_version: value(TRACE_SCHEMA_VERSION) } },
     { operation: "create_edge", id: deterministicExecutionId("USES_EXECUTION_ENGINE", [turnNodeId, executionEngineNodeId]), from: turnNodeId, to: executionEngineNodeId, edge_type: "USES_EXECUTION_ENGINE", properties: { execution_engine: value("claude-code") } }
   ];
+  const contentArtifacts = [];
+  if (trace.initialPrompt !== void 0) {
+    const initialPromptArtifact = buildContentArtifactOperations({
+      content: trace.initialPrompt,
+      mediaType: "text/plain; charset=utf-8",
+      observableKind: "initial-human-prompt",
+      sourceRef: `claude-code:${trace.claudeSessionId}:initial-prompt`
+    });
+    contentArtifacts.push(...initialPromptArtifact.artifacts);
+    operations.push(...initialPromptArtifact.operations, {
+      operation: "create_edge",
+      id: deterministicId("INCLUDES_ARTIFACT", [sessionNodeId, initialPromptArtifact.ref.artifactId]),
+      from: sessionNodeId,
+      to: initialPromptArtifact.ref.artifactId,
+      edge_type: "INCLUDES_ARTIFACT",
+      properties: { role: value("initial-human-prompt"), content_hash: value(initialPromptArtifact.ref.contentHash) }
+    });
+    sessionProperties.initial_prompt_artifact = value(initialPromptArtifact.ref);
+  }
   if (modelNodeId) {
     operations.push({ operation: "create_node", id: modelNodeId, label: "Model", mode: "merge", properties: { provider: value("anthropic"), model: value(model), schema_version: value(TRACE_SCHEMA_VERSION) } }, { operation: "create_edge", id: deterministicExecutionId("USES_MODEL", [turnNodeId, modelNodeId]), from: turnNodeId, to: modelNodeId, edge_type: "USES_MODEL", properties: { provider: value("anthropic"), model: value(model) } });
   }
   addWorkspaceOperations(operations, turnNodeId, trace.cwd);
   trace.events.forEach((event) => {
     const eventId = deterministicId("ClaudeCodeHookEvent", [turnNodeId, event.sequence, event.hookEventName, event.toolUseId ?? ""]);
-    operations.push({ operation: "create_node", id: eventId, label: "ClaudeCodeHookEvent", mode: "merge", properties: { event_index: value(event.sequence), event_type: value(event.hookEventName), cwd: value(event.cwd ?? trace.cwd ?? ""), tool_name: value(event.toolName ?? ""), tool_use_id: value(event.toolUseId ?? ""), data: value(eventData(event)), schema_version: value(TRACE_SCHEMA_VERSION) } }, { operation: "create_edge", id: deterministicId("EMITTED_CLAUDE_CODE_HOOK", [turnNodeId, eventId]), from: turnNodeId, to: eventId, edge_type: "EMITTED_CLAUDE_CODE_HOOK", properties: { event_index: value(event.sequence) } });
+    const artifactRefs = {};
+    const observable = [];
+    if (event.prompt !== void 0)
+      observable.push({ role: "human-prompt", content: event.prompt, mediaType: "text/plain; charset=utf-8" });
+    if (event.toolInput !== void 0)
+      observable.push({ role: "tool-input", content: stableJson(event.toolInput), mediaType: "application/json" });
+    if (event.toolResponse !== void 0)
+      observable.push({ role: "tool-response", content: stableJson(event.toolResponse), mediaType: "application/json" });
+    if (event.stdout !== void 0)
+      observable.push({ role: "tool-stdout", content: event.stdout, mediaType: "text/plain; charset=utf-8" });
+    if (event.stderr !== void 0)
+      observable.push({ role: "tool-stderr", content: event.stderr, mediaType: "text/plain; charset=utf-8" });
+    if (event.decisionQuestion !== void 0)
+      observable.push({ role: "decision-question", content: event.decisionQuestion, mediaType: "text/plain; charset=utf-8" });
+    if (event.decisionOptions !== void 0)
+      observable.push({ role: "decision-options", content: stableJson(event.decisionOptions), mediaType: "application/json" });
+    if (event.decisionAnswer !== void 0)
+      observable.push({ role: "decision-answer", content: event.decisionAnswer, mediaType: "text/plain; charset=utf-8" });
+    if (event.hookPayload !== void 0)
+      observable.push({ role: "hook-envelope", content: stableJson(event.hookPayload), mediaType: "application/json" });
+    if (event.contextDelivery !== void 0)
+      observable.push({ role: "rendered-context", content: event.contextDelivery.renderedContent, mediaType: "text/plain; charset=utf-8" });
+    for (const item of observable) {
+      const built = buildContentArtifactOperations({
+        content: item.content,
+        mediaType: item.mediaType,
+        observableKind: item.role,
+        sourceRef: `claude-code:${trace.claudeSessionId}:${trace.turnIndex}:${event.sequence}:${item.role}`
+      });
+      artifactRefs[item.role] = built.ref;
+      contentArtifacts.push(...built.artifacts);
+      operations.push(...built.operations);
+    }
+    operations.push({ operation: "create_node", id: eventId, label: "ClaudeCodeHookEvent", mode: "merge", properties: { event_index: value(event.sequence), event_type: value(event.hookEventName), cwd: value(event.cwd ?? trace.cwd ?? ""), tool_name: value(event.toolName ?? ""), tool_use_id: value(event.toolUseId ?? ""), data: value(eventData(event, artifactRefs)), schema_version: value(TRACE_SCHEMA_VERSION) } }, { operation: "create_edge", id: deterministicId("EMITTED_CLAUDE_CODE_HOOK", [turnNodeId, eventId]), from: turnNodeId, to: eventId, edge_type: "EMITTED_CLAUDE_CODE_HOOK", properties: { event_index: value(event.sequence) } });
+    for (const [role, artifact] of Object.entries(artifactRefs)) {
+      operations.push({ operation: "create_edge", id: deterministicId("INCLUDES_ARTIFACT", [eventId, artifact.artifactId]), from: eventId, to: artifact.artifactId, edge_type: "INCLUDES_ARTIFACT", properties: { role: value(role), content_hash: value(artifact.contentHash) } });
+    }
+    if (event.contextDelivery && artifactRefs["rendered-context"]) {
+      const receipt = buildContextDeliveryReceiptOperations({
+        deliveryKey: event.contextDelivery.deliveryKey,
+        session: { nodeId: sessionNodeId, label: "ClaudeCodeSession" },
+        packId: event.contextDelivery.packId,
+        packHash: event.contextDelivery.packHash,
+        renderedArtifact: artifactRefs["rendered-context"],
+        interface: event.contextDelivery.interface,
+        coverageStatus: event.contextDelivery.coverageStatus,
+        omissions: event.contextDelivery.omissions,
+        deliveredAt: event.contextDelivery.deliveredAt
+      });
+      operations.push(...receipt.operations);
+    }
     addWorkspaceOperations(operations, eventId, event.cwd ?? trace.cwd);
     const toolNodeId = event.toolName ? deterministicId("ClaudeCodeToolUse", [turnNodeId, event.toolUseId ?? event.sequence, event.toolName]) : null;
     if (toolNodeId) {
@@ -3425,170 +3919,45 @@ function buildClaudeCodeHookTraceOperations(trace) {
     const projectionSourceId = toolNodeId ?? eventId;
     addCodeFileOperations(operations, projectionSourceId, [...collectFilePaths(event.toolInput), ...collectFilePaths(event.toolResponse)]);
     addCommandOperation(operations, projectionSourceId, extractCommand(event.toolInput));
+    const decisionKind = event.decisionKind ?? (event.permissionDecision !== void 0 ? "tool_permission" : event.toolName && /askuser|ask_user/i.test(event.toolName) ? "ask_user" : null);
+    if (decisionKind) {
+      let questionArtifact = artifactRefs["decision-question"] ?? artifactRefs["tool-input"] ?? artifactRefs["human-prompt"];
+      if (!questionArtifact) {
+        const built = buildContentArtifactOperations({
+          content: stableJson({ toolName: event.toolName, reason: event.reason }),
+          mediaType: "application/json",
+          observableKind: "decision-question",
+          sourceRef: `claude-code:${trace.claudeSessionId}:${trace.turnIndex}:${event.sequence}:decision-question`
+        });
+        questionArtifact = built.ref;
+        contentArtifacts.push(...built.artifacts);
+        operations.push(...built.operations);
+      }
+      const observation = buildDecisionObservationOperations({
+        observationKey: `${decisionKind}:${event.toolUseId ?? event.sequence}`,
+        session: { nodeId: sessionNodeId, label: "ClaudeCodeSession" },
+        kind: decisionKind,
+        interface: "claude-code",
+        questionArtifact,
+        optionsArtifact: artifactRefs["decision-options"] ?? artifactRefs["tool-input"],
+        rationaleArtifact: artifactRefs["decision-answer"],
+        optionsPresented: event.decisionOptions ?? [],
+        selectedOption: event.decisionAnswer ?? event.permissionDecision ?? (event.toolResponse === void 0 ? void 0 : stableJson(event.toolResponse)),
+        actor: "human",
+        policyRef: event.decisionPolicyRef ?? event.permissionDecisionReason,
+        observedAt: new Date(event.receivedAt).toISOString()
+      });
+      operations.push(...observation.operations);
+    }
   });
-  return operations;
+  return { operations, contentArtifacts };
 }
 
 // node_modules/rickydata/dist/kfdb/codex-hook-trace.js
-import { createHash as createHash3, randomUUID as randomUUID3 } from "node:crypto";
-var KG_NAMESPACE3 = uuidV53("rickydata-codex-hook-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
-var EXECUTION_KG_NAMESPACE3 = uuidV53("rickydata-execution-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
-function uuidV53(name, namespace) {
-  const ns = Buffer.from(namespace.replace(/-/g, ""), "hex");
-  if (ns.length !== 16)
-    throw new Error("Invalid UUID namespace");
-  const hash = createHash3("sha1").update(Buffer.concat([ns, Buffer.from(name)])).digest();
-  hash[6] = hash[6] & 15 | 80;
-  hash[8] = hash[8] & 63 | 128;
-  const hex = hash.subarray(0, 16).toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-// node_modules/rickydata/dist/kfdb/hermes-hook-trace.js
-import { createHash as createHash4, randomUUID as randomUUID4 } from "node:crypto";
-var KG_NAMESPACE4 = uuidV54("rickydata-hermes-hook-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
-var EXECUTION_KG_NAMESPACE4 = uuidV54("rickydata-execution-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
+import { createHash as createHash5, randomUUID as randomUUID3 } from "node:crypto";
+var KG_NAMESPACE3 = uuidV54("rickydata-codex-hook-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
+var EXECUTION_KG_NAMESPACE3 = uuidV54("rickydata-execution-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
 function uuidV54(name, namespace) {
-  const ns = Buffer.from(namespace.replace(/-/g, ""), "hex");
-  if (ns.length !== 16)
-    throw new Error("Invalid UUID namespace");
-  const hash = createHash4("sha1").update(Buffer.concat([ns, Buffer.from(name)])).digest();
-  hash[6] = hash[6] & 15 | 80;
-  hash[8] = hash[8] & 63 | 128;
-  const hex = hash.subarray(0, 16).toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-// node_modules/rickydata/dist/kfdb/rickydata-graph.js
-var GraphEntityKind;
-(function(GraphEntityKind2) {
-  GraphEntityKind2["Repository"] = "Repository";
-  GraphEntityKind2["Commit"] = "Commit";
-  GraphEntityKind2["File"] = "File";
-  GraphEntityKind2["Function"] = "Function";
-  GraphEntityKind2["TypeDefinition"] = "TypeDefinition";
-  GraphEntityKind2["TestCase"] = "TestCase";
-  GraphEntityKind2["Symbol"] = "Symbol";
-  GraphEntityKind2["Dependency"] = "Dependency";
-  GraphEntityKind2["GitHubIssue"] = "GitHubIssue";
-  GraphEntityKind2["GitHubProjectItem"] = "GitHubProjectItem";
-  GraphEntityKind2["GitHubPullRequest"] = "GitHubPullRequest";
-  GraphEntityKind2["RickydataWorkIntent"] = "RickydataWorkIntent";
-  GraphEntityKind2["RickydataAttempt"] = "RickydataAttempt";
-  GraphEntityKind2["RickydataRun"] = "RickydataRun";
-  GraphEntityKind2["RickydataPatch"] = "RickydataPatch";
-  GraphEntityKind2["RickydataProof"] = "RickydataProof";
-  GraphEntityKind2["CIJob"] = "CIJob";
-  GraphEntityKind2["AgentSession"] = "AgentSession";
-  GraphEntityKind2["AgentTraceEvent"] = "AgentTraceEvent";
-  GraphEntityKind2["RelaySnapshot"] = "RelaySnapshot";
-  GraphEntityKind2["KfdbProjection"] = "KfdbProjection";
-  GraphEntityKind2["UnderstandingSummary"] = "UnderstandingSummary";
-  GraphEntityKind2["CodeConcept"] = "CodeConcept";
-  GraphEntityKind2["DesignDecision"] = "DesignDecision";
-  GraphEntityKind2["RickydataProductEntity"] = "RickydataProductEntity";
-  GraphEntityKind2["RoadmapItem"] = "RoadmapItem";
-  GraphEntityKind2["EvidenceRecord"] = "EvidenceRecord";
-  GraphEntityKind2["PriorityScoreSnapshot"] = "PriorityScoreSnapshot";
-  GraphEntityKind2["AlignmentReviewItem"] = "AlignmentReviewItem";
-  GraphEntityKind2["DecisionRecord"] = "DecisionRecord";
-  GraphEntityKind2["RoadmapSnapshot"] = "RoadmapSnapshot";
-  GraphEntityKind2["AgentContextPack"] = "AgentContextPack";
-  GraphEntityKind2["EvidenceRequirement"] = "EvidenceRequirement";
-  GraphEntityKind2["EvidenceBundle"] = "EvidenceBundle";
-  GraphEntityKind2["ReleaseGate"] = "ReleaseGate";
-  GraphEntityKind2["LearningItem"] = "LearningItem";
-  GraphEntityKind2["BenchmarkRunProof"] = "BenchmarkRunProof";
-  GraphEntityKind2["OpenQuestion"] = "OpenQuestion";
-})(GraphEntityKind || (GraphEntityKind = {}));
-var GraphEdgeType;
-(function(GraphEdgeType2) {
-  GraphEdgeType2["Contains"] = "CONTAINS";
-  GraphEdgeType2["HasCommit"] = "HAS_COMMIT";
-  GraphEdgeType2["Defines"] = "DEFINES";
-  GraphEdgeType2["Imports"] = "IMPORTS";
-  GraphEdgeType2["Calls"] = "CALLS";
-  GraphEdgeType2["Tests"] = "TESTS";
-  GraphEdgeType2["DependsOn"] = "DEPENDS_ON";
-  GraphEdgeType2["Touches"] = "TOUCHES";
-  GraphEdgeType2["Mentions"] = "MENTIONS";
-  GraphEdgeType2["Implements"] = "IMPLEMENTS";
-  GraphEdgeType2["DerivedFromIssue"] = "DERIVED_FROM_ISSUE";
-  GraphEdgeType2["ProducedBy"] = "PRODUCED_BY";
-  GraphEdgeType2["Proves"] = "PROVES";
-  GraphEdgeType2["FailedBy"] = "FAILED_BY";
-  GraphEdgeType2["Supersedes"] = "SUPERSEDES";
-  GraphEdgeType2["Blocks"] = "BLOCKS";
-  GraphEdgeType2["Unblocks"] = "UNBLOCKS";
-  GraphEdgeType2["SupportedBy"] = "SUPPORTED_BY";
-  GraphEdgeType2["VerifiedBy"] = "VERIFIED_BY";
-  GraphEdgeType2["ProjectedToKfdb"] = "PROJECTED_TO_KFDB";
-  GraphEdgeType2["SyncedToRelay"] = "SYNCED_TO_RELAY";
-  GraphEdgeType2["Summarizes"] = "SUMMARIZES";
-  GraphEdgeType2["AboutProductEntity"] = "ABOUT_PRODUCT_ENTITY";
-  GraphEdgeType2["RequiresEvidence"] = "REQUIRES_EVIDENCE";
-  GraphEdgeType2["SatisfiesRequirement"] = "SATISFIES_REQUIREMENT";
-  GraphEdgeType2["BundlesEvidence"] = "BUNDLES_EVIDENCE";
-  GraphEdgeType2["CapturesPriority"] = "CAPTURES_PRIORITY";
-  GraphEdgeType2["ReviewedForAlignment"] = "REVIEWED_FOR_ALIGNMENT";
-  GraphEdgeType2["RecordsDecision"] = "RECORDS_DECISION";
-  GraphEdgeType2["SnapshotsRoadmap"] = "SNAPSHOTS_ROADMAP";
-  GraphEdgeType2["ProvidesContext"] = "PROVIDES_CONTEXT";
-  GraphEdgeType2["GatesRelease"] = "GATES_RELEASE";
-  GraphEdgeType2["CapturesLearning"] = "CAPTURES_LEARNING";
-  GraphEdgeType2["SatisfiesWorkIntent"] = "SATISFIES_WORK_INTENT";
-  GraphEdgeType2["ProvenByBenchmark"] = "PROVEN_BY_BENCHMARK";
-  GraphEdgeType2["GeneratedBySession"] = "GENERATED_BY_SESSION";
-})(GraphEdgeType || (GraphEdgeType = {}));
-var ENTITY_ID_PARTS = {
-  [GraphEntityKind.Repository]: ["canonical_repo_ref"],
-  [GraphEntityKind.Commit]: ["repo_id", "commit_sha"],
-  [GraphEntityKind.File]: ["repo_id", "commit_sha", "path", "content_hash"],
-  [GraphEntityKind.Function]: ["file_id", "function_name", "span_hash"],
-  [GraphEntityKind.TypeDefinition]: ["file_id", "type_name", "span_hash"],
-  [GraphEntityKind.TestCase]: ["file_id", "test_name", "span_hash"],
-  [GraphEntityKind.Symbol]: ["repo_id", "commit_sha", "path", "symbol_path", "span_hash"],
-  [GraphEntityKind.Dependency]: ["repo_id", "commit_sha", "dependency_name", "dependency_version"],
-  [GraphEntityKind.GitHubIssue]: ["repo_id", "issue_number"],
-  [GraphEntityKind.GitHubProjectItem]: ["repo_id", "project_item_id"],
-  [GraphEntityKind.GitHubPullRequest]: ["repo_id", "pull_request_number"],
-  [GraphEntityKind.RickydataWorkIntent]: ["repo_id", "intent_id"],
-  [GraphEntityKind.RickydataAttempt]: ["repo_id", "attempt_id"],
-  [GraphEntityKind.RickydataRun]: ["repo_id", "run_id"],
-  [GraphEntityKind.RickydataPatch]: ["repo_id", "patch_id"],
-  [GraphEntityKind.RickydataProof]: ["repo_id", "proof_id"],
-  [GraphEntityKind.CIJob]: ["repo_id", "provider", "run_id", "job_id"],
-  [GraphEntityKind.AgentSession]: ["repo_id", "session_id"],
-  [GraphEntityKind.AgentTraceEvent]: ["repo_id", "session_id", "event_id"],
-  [GraphEntityKind.RelaySnapshot]: ["repo_id", "remote", "ref_name", "object_id"],
-  [GraphEntityKind.KfdbProjection]: ["repo_id", "projection_id"],
-  [GraphEntityKind.UnderstandingSummary]: ["repo_id", "commit_sha", "scope", "summary_hash"],
-  [GraphEntityKind.CodeConcept]: ["repo_id", "concept_name", "source_hash"],
-  [GraphEntityKind.DesignDecision]: ["repo_id", "decision_id"],
-  [GraphEntityKind.RickydataProductEntity]: ["repo_id", "product_entity_id"],
-  [GraphEntityKind.RoadmapItem]: ["repo_id", "roadmap_item_id"],
-  [GraphEntityKind.EvidenceRecord]: ["repo_id", "evidence_record_id"],
-  [GraphEntityKind.PriorityScoreSnapshot]: ["repo_id", "subject_id", "snapshot_id"],
-  [GraphEntityKind.AlignmentReviewItem]: ["repo_id", "review_item_id"],
-  [GraphEntityKind.DecisionRecord]: ["repo_id", "decision_record_id"],
-  [GraphEntityKind.RoadmapSnapshot]: ["repo_id", "roadmap_snapshot_id"],
-  [GraphEntityKind.AgentContextPack]: ["repo_id", "context_pack_id"],
-  [GraphEntityKind.EvidenceRequirement]: ["repo_id", "evidence_requirement_id"],
-  [GraphEntityKind.EvidenceBundle]: ["repo_id", "evidence_bundle_id"],
-  [GraphEntityKind.ReleaseGate]: ["repo_id", "release_gate_id"],
-  [GraphEntityKind.LearningItem]: ["repo_id", "learning_item_id"],
-  [GraphEntityKind.BenchmarkRunProof]: ["repo_id", "benchmark_run_id", "proof_id"],
-  // memory-v1: same `(source_ref, question)` ⇒ same id ⇒ idempotent merge.
-  [GraphEntityKind.OpenQuestion]: ["source_ref", "question"]
-};
-
-// node_modules/rickydata/dist/kfdb/session-link.js
-import { createHash as createHash5 } from "node:crypto";
-var EXECUTION_KG_NAMESPACE5 = uuidV55("rickydata-execution-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
-var TRACE_SCHEMA_VERSION2 = 3;
-var HARNESS_SESSION_KEY_LABEL = "HarnessSessionKey";
-var SAME_SESSION_EDGE_TYPE = "SAME_SESSION";
-function uuidV55(name, namespace) {
   const ns = Buffer.from(namespace.replace(/-/g, ""), "hex");
   if (ns.length !== 16)
     throw new Error("Invalid UUID namespace");
@@ -3598,8 +3967,40 @@ function uuidV55(name, namespace) {
   const hex = hash.subarray(0, 16).toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
+
+// node_modules/rickydata/dist/kfdb/hermes-hook-trace.js
+import { createHash as createHash6, randomUUID as randomUUID4 } from "node:crypto";
+var KG_NAMESPACE4 = uuidV55("rickydata-hermes-hook-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
+var EXECUTION_KG_NAMESPACE4 = uuidV55("rickydata-execution-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
+function uuidV55(name, namespace) {
+  const ns = Buffer.from(namespace.replace(/-/g, ""), "hex");
+  if (ns.length !== 16)
+    throw new Error("Invalid UUID namespace");
+  const hash = createHash6("sha1").update(Buffer.concat([ns, Buffer.from(name)])).digest();
+  hash[6] = hash[6] & 15 | 80;
+  hash[8] = hash[8] & 63 | 128;
+  const hex = hash.subarray(0, 16).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+// node_modules/rickydata/dist/kfdb/session-link.js
+import { createHash as createHash7 } from "node:crypto";
+var EXECUTION_KG_NAMESPACE5 = uuidV56("rickydata-execution-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
+var TRACE_SCHEMA_VERSION2 = 3;
+var HARNESS_SESSION_KEY_LABEL = "HarnessSessionKey";
+var SAME_SESSION_EDGE_TYPE = "SAME_SESSION";
+function uuidV56(name, namespace) {
+  const ns = Buffer.from(namespace.replace(/-/g, ""), "hex");
+  if (ns.length !== 16)
+    throw new Error("Invalid UUID namespace");
+  const hash = createHash7("sha1").update(Buffer.concat([ns, Buffer.from(name)])).digest();
+  hash[6] = hash[6] & 15 | 80;
+  hash[8] = hash[8] & 63 | 128;
+  const hex = hash.subarray(0, 16).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 function deterministicExecutionId2(kind, parts) {
-  return uuidV55(`${kind}:${parts.map((p) => String(p)).join(":")}`, EXECUTION_KG_NAMESPACE5);
+  return uuidV56(`${kind}:${parts.map((p) => String(p)).join(":")}`, EXECUTION_KG_NAMESPACE5);
 }
 function value2(input) {
   if (input === null || input === void 0)
@@ -3653,12 +4054,12 @@ var AKC_PRIVATE_LABELS = [
 ];
 
 // src/lib/http.ts
-async function postJson(url, body, headers, timeoutMs = 15e3) {
+async function requestJson(url, body, headers, timeoutMs = 15e3, method = "POST") {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
-      method: "POST",
+      method,
       headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify(body),
       signal: controller.signal
@@ -3675,14 +4076,23 @@ async function postJson(url, body, headers, timeoutMs = 15e3) {
     clearTimeout(timer);
   }
 }
+function postJson(url, body, headers, timeoutMs = 15e3, method = "POST") {
+  return requestJson(url, body, headers, timeoutMs, method);
+}
+function putJson(url, body, headers, timeoutMs = 15e3) {
+  return requestJson(url, body, headers, timeoutMs, "PUT");
+}
 
 // src/lib/graph.ts
 var BATCH_SIZE = 900;
 var GRAPH_WRITE_TIMEOUT_MS = 6e4;
-function buildGraphOperations(walletAddress, traces) {
+function buildGraphWriteBundle(walletAddress, traces) {
   const operations = [];
+  const contentArtifacts = [];
   for (const trace of traces) {
-    operations.push(...buildClaudeCodeHookTraceOperations(trace));
+    const bundle = buildClaudeCodeHookTraceWriteBundle(trace);
+    operations.push(...bundle.operations);
+    contentArtifacts.push(...bundle.contentArtifacts);
     const fromNodeId = claudeCodeSessionNodeId(trace);
     operations.push(
       ...buildSessionLinkOperations({
@@ -3693,7 +4103,7 @@ function buildGraphOperations(walletAddress, traces) {
       })
     );
   }
-  return operations;
+  return { operations, contentArtifacts };
 }
 function batchOperations(operations) {
   const batches = [];
@@ -3703,41 +4113,15 @@ function batchOperations(operations) {
   return batches;
 }
 
-// src/lib/spool.ts
-import path5 from "node:path";
-function spoolFileName(claudeSessionId, seq, batchIndex = 0) {
-  const safe = String(claudeSessionId || "unknown").replace(/[^A-Za-z0-9_.-]/g, "_");
-  const suffix = batchIndex > 0 ? `-b${batchIndex}` : "";
-  return `trace-${safe}-${seq}${suffix}.json`;
-}
-function writeSpool(spoolDir, traces) {
-  const written = [];
-  for (const trace of traces) {
-    const graphOperations = buildGraphOperations(trace.walletAddress, [trace]);
-    const batches = batchOperations(graphOperations);
-    if (batches.length === 0) batches.push([]);
-    batches.forEach((batch, batchIndex) => {
-      const body = { ...trace, spoolVersion: 2, graphOperations: batch };
-      const filePath = path5.join(spoolDir, spoolFileName(trace.claudeSessionId, trace.turnIndex, batchIndex));
-      writeFileAtomic(filePath, JSON.stringify(body));
-      written.push(filePath);
-    });
-  }
-  return written;
-}
-
-// src/lib/legacy-stream.ts
-import path7 from "node:path";
-
 // src/lib/queue.ts
 import fs6 from "node:fs";
-import path6 from "node:path";
-import { createHash as createHash6 } from "node:crypto";
+import path5 from "node:path";
+import { createHash as createHash8 } from "node:crypto";
 var BACKOFF_CAP_MS = 4 * 60 * 60 * 1e3;
 var DEFAULT_DRAIN_BUDGET_MS = 4 * 6e4;
 var DRAIN_LOCK_STALE_MS = 15 * 6e4;
 function hash16(input) {
-  return createHash6("sha256").update(input).digest("hex").slice(0, 16);
+  return createHash8("sha256").update(input).digest("hex").slice(0, 16);
 }
 function contentHashOf(request) {
   return hash16(`${request.url}
@@ -3762,7 +4146,7 @@ function enqueue(request, dirs = {}) {
       const superseded = existing.filter((f) => f.includes(`-k${keyHash}-`));
       for (const f of superseded) {
         try {
-          fs6.rmSync(path6.join(dir, f), { force: true });
+          fs6.rmSync(path5.join(dir, f), { force: true });
         } catch {
         }
       }
@@ -3774,13 +4158,138 @@ function enqueue(request, dirs = {}) {
     const keySegment = keyHash ? `-k${keyHash}` : "";
     const name = `${Date.now()}-${rand}${keySegment}-c${contentHash}.json`;
     const entry = { ...request, queuedAt: (/* @__PURE__ */ new Date()).toISOString() };
-    fs6.writeFileSync(path6.join(dir, name), JSON.stringify(entry), { mode: 384 });
+    fs6.writeFileSync(path5.join(dir, name), JSON.stringify(entry), { mode: 384 });
   } catch (err) {
     log("warn", "enqueue failed", { error: err.message });
   }
 }
 
+// src/lib/artifacts.ts
+async function writeContentArtifacts(config, apiKey, deriveHeaders, artifacts) {
+  const unique = [...new Map(artifacts.map((artifact) => [artifact.key, artifact])).values()];
+  const url = `${config.api_url.replace(/\/$/, "")}/api/v1/kv`;
+  const result = { attempted: unique.length, persisted: 0, queued: 0, ok: true };
+  for (const artifact of unique) {
+    const body = { key: artifact.key, value: artifact.value, if_absent: true };
+    const queuedRequest = {
+      url,
+      method: "PUT",
+      body,
+      requiresBearer: true,
+      requiresDerive: true,
+      dedupeKey: `content-artifact:${artifact.key}`
+    };
+    if (!deriveHeaders) {
+      enqueue(queuedRequest);
+      result.queued += 1;
+      result.ok = false;
+      continue;
+    }
+    try {
+      const response = await putJson(url, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, 6e4);
+      if (response.ok || response.status === 409) {
+        result.persisted += 1;
+      } else {
+        enqueue(queuedRequest);
+        result.queued += 1;
+        result.ok = false;
+        log("warn", "content artifact write failed; queued", { key: artifact.key, status: response.status });
+      }
+    } catch (error) {
+      enqueue(queuedRequest);
+      result.queued += 1;
+      result.ok = false;
+      log("warn", "content artifact write error; queued", { key: artifact.key, error: error.message });
+    }
+  }
+  return result;
+}
+
+// src/lib/spool.ts
+import path6 from "node:path";
+
+// src/lib/spool-record.ts
+var GATEWAY_SPOOL_MAX_BYTES = 2 * 1024 * 1024;
+function contentArtifactRecord(identity, artifact) {
+  return { spoolVersion: 3, recordType: "content_artifact", ...identity, artifact };
+}
+function graphBatchRecord(identity, graphOperations) {
+  return { spoolVersion: 3, recordType: "graph_batch", ...identity, graphOperations };
+}
+function serializeBoundedSpoolRecord(record) {
+  const serialized = JSON.stringify(record);
+  const bytes = Buffer.byteLength(serialized, "utf8");
+  if (bytes > GATEWAY_SPOOL_MAX_BYTES) {
+    throw new Error(`spool record is ${bytes} bytes; gateway maximum is ${GATEWAY_SPOOL_MAX_BYTES}`);
+  }
+  return serialized;
+}
+function splitGraphBatchByBytes(identity, operations) {
+  if (operations.length === 0) return [[]];
+  const batches = [];
+  let current = [];
+  for (const operation of operations) {
+    const candidate = [...current, operation];
+    const bytes = Buffer.byteLength(JSON.stringify(graphBatchRecord(identity, candidate)), "utf8");
+    if (bytes <= GATEWAY_SPOOL_MAX_BYTES) {
+      current = candidate;
+      continue;
+    }
+    if (current.length === 0) {
+      throw new Error("one graph operation exceeds the gateway spool record limit");
+    }
+    batches.push(current);
+    current = [operation];
+    serializeBoundedSpoolRecord(graphBatchRecord(identity, current));
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
+}
+function artifactSpoolFileName(identity, artifact, artifactIndex) {
+  const safe = identity.traceSessionId.replace(/[^A-Za-z0-9_.-]/g, "_") || "unknown";
+  const kind = identity.traceKind === "claude_code" ? "claude" : "codex";
+  const hash = artifact.key.replace("content-artifact:sha256:", "").slice(0, 16);
+  return `artifact-${kind}-${safe}-${identity.turnIndex}-a${String(artifactIndex).padStart(4, "0")}-${hash}.json`;
+}
+
+// src/lib/spool.ts
+function spoolFileName(claudeSessionId, seq, batchIndex = 0) {
+  const safe = String(claudeSessionId || "unknown").replace(/[^A-Za-z0-9_.-]/g, "_");
+  const suffix = batchIndex > 0 ? `-b${batchIndex}` : "";
+  return `trace-${safe}-${seq}${suffix}.json`;
+}
+function writeSpool(spoolDir, traces) {
+  const written = [];
+  for (const trace of traces) {
+    const bundle = buildGraphWriteBundle(trace.walletAddress, [trace]);
+    const identity = {
+      traceKind: "claude_code",
+      walletAddress: trace.walletAddress,
+      traceSessionId: trace.claudeSessionId,
+      turnIndex: trace.turnIndex
+    };
+    const artifacts = [...new Map(bundle.contentArtifacts.map((artifact) => [artifact.key, artifact])).values()];
+    artifacts.forEach((artifact, artifactIndex) => {
+      const body = contentArtifactRecord(identity, artifact);
+      const filePath = path6.join(spoolDir, artifactSpoolFileName(identity, artifact, artifactIndex));
+      writeFileAtomic(filePath, serializeBoundedSpoolRecord(body));
+      written.push(filePath);
+    });
+    const countBatches = batchOperations(bundle.operations);
+    if (countBatches.length === 0) countBatches.push([]);
+    const batches = countBatches.flatMap((batch) => splitGraphBatchByBytes(identity, batch));
+    batches.forEach((batch, batchIndex) => {
+      const body = graphBatchRecord(identity, batch);
+      const filePath = path6.join(spoolDir, spoolFileName(trace.claudeSessionId, trace.turnIndex, batchIndex));
+      writeFileAtomic(filePath, serializeBoundedSpoolRecord(body));
+      written.push(filePath);
+    });
+  }
+  return written;
+}
+
 // src/lib/legacy-stream.ts
+import path7 from "node:path";
 function workspaceName(cwd) {
   if (!cwd) return "unknown";
   return path7.basename(cwd) || cwd;
@@ -4009,8 +4518,10 @@ async function writeLegacyStream(cfg, claudeSessionId, events, startAfterSequenc
 async function writeDirectUnit(input) {
   const { config, walletAddress, apiKey, deriveHeaders, claudeSessionId, events, summary, transcriptPath } = input;
   const traces = buildTraces({ walletAddress, claudeSessionId, events, summary });
-  const operations = buildGraphOperations(walletAddress, traces);
+  const bundle = buildGraphWriteBundle(walletAddress, traces);
+  const operations = bundle.operations;
   const writeUrl = `${config.api_url.replace(/\/$/, "")}/api/v1/write`;
+  const artifactResult = await writeContentArtifacts(config, apiKey, deriveHeaders, bundle.contentArtifacts);
   let graphOk = true;
   const batches = batchOperations(operations);
   for (let i = 0; i < batches.length; i++) {
@@ -4061,7 +4572,7 @@ async function writeDirectUnit(input) {
       log("warn", "legacy stream failed", { sessionId: claudeSessionId, error: err.message });
     }
   }
-  return { ops: operations.length, graphOk, messages, tools, maxSequence, legacyOk, sessionMessageCount, sessionToolCallCount };
+  return { ops: operations.length, graphOk, artifactOk: artifactResult.ok, artifacts: artifactResult.attempted, messages, tools, maxSequence, legacyOk, sessionMessageCount, sessionToolCallCount };
 }
 function writeGatewayUnit(input) {
   const traces = buildTraces({

@@ -64,10 +64,16 @@ describe('codex trace grouping', () => {
   });
 
   it('builds one trace per turn with session/turn scalars', () => {
-    const t = traces();
+    const events = codexEvents();
+    for (const event of events) Object.assign(event, {
+      repoOwner: 'rickycambrian', repoId: 'repo', repoFullName: 'rickycambrian/repo',
+      repoRemoteUrl: 'git@github.com:rickycambrian/repo.git', repoBranch: 'main', repoCommitSha: 'a'.repeat(40),
+    });
+    const t = buildCodexTraces({ walletAddress: WALLET, agentId: AGENT, codexSessionId: 'cx-session-1', events });
     expect(t).toHaveLength(2);
     expect(t[0]).toMatchObject({ walletAddress: WALLET, agentId: AGENT, sessionId: 'cx-session-1', codexSessionId: 'cx-session-1', turnIndex: 1, turnId: 't1', model: 'gpt-5.3-codex', cwd: '/repo' });
     expect(t[1].model).toBe('gpt-5.3-codex'); // session-wide fallback for a turn with no model event
+    expect(t[0].repository).toEqual(expect.objectContaining({ fullName: 'rickycambrian/repo', branch: 'main', commitSha: 'a'.repeat(40) }));
   });
 });
 
@@ -116,16 +122,22 @@ describe('codex direct/gateway parity', () => {
 
     const dir = tmp();
     const files = writeCodexSpool(dir, t);
-    expect(files).toHaveLength(2);
+    expect(files.length).toBeGreaterThan(2);
 
     const bodies = files
       .map((f) => JSON.parse(fs.readFileSync(f, 'utf8')))
       .sort((a, b) => a.turnIndex - b.turnIndex);
     for (const body of bodies) {
-      expect(body.spoolVersion).toBe(2);
-      expect(body.codexSessionId).toBe('cx-session-1');
+      expect(body.spoolVersion).toBe(3);
+      expect(body.traceSessionId).toBe('cx-session-1');
+      expect(['content_artifact', 'graph_batch']).toContain(body.recordType);
     }
-    const spoolOps = bodies.flatMap((b) => b.graphOperations);
+    const artifacts = bodies.filter((body) => body.recordType === 'content_artifact');
+    const graphBodies = bodies.filter((body) => body.recordType === 'graph_batch');
+    expect(artifacts.length).toBeGreaterThan(0);
+    expect(graphBodies).toHaveLength(2);
+    expect(graphBodies.every((body) => body.events === undefined)).toBe(true);
+    const spoolOps = graphBodies.flatMap((b) => b.graphOperations);
     expect(spoolOps).toEqual(directOps);
   });
 
@@ -156,6 +168,8 @@ describe('codex config', () => {
     const gateOff = await ownedRepository(cwd, null);
     expect(gateOff?.owner).toBe('rickycambrian');
     expect(gateOff?.repository).toBe('rd-plugin');
+    expect(gateOff?.branch).toBe('main');
+    expect(gateOff?.commitSha).toMatch(/^[0-9a-f]{40}$/);
     expect(await ownedRepository(cwd, ['someoneelse'])).toBeNull();
   });
 

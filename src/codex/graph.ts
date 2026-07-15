@@ -1,5 +1,5 @@
 import type { CodexHookTrace } from 'rickydata/kfdb';
-import { buildCodexHookTraceOperations, buildSessionLinkOperations } from 'rickydata/kfdb';
+import { buildCodexHookTraceWriteBundle, buildSessionLinkOperations, codexSessionNodeId, type ImmutableContentArtifactWrite } from 'rickydata/kfdb';
 import { log } from '../lib/log.js';
 
 type GraphOp = Record<string, unknown>;
@@ -27,11 +27,21 @@ export function extractCodexSessionNodeId(ops: GraphOp[]): string | undefined {
  * drift from the builder's id recipe.
  */
 export function buildCodexGraphOperations(walletAddress: string, traces: CodexHookTrace[]): GraphOp[] {
+  return buildCodexGraphWriteBundle(walletAddress, traces).operations;
+}
+
+export function buildCodexGraphWriteBundle(walletAddress: string, traces: CodexHookTrace[]): {
+  operations: GraphOp[];
+  contentArtifacts: ImmutableContentArtifactWrite[];
+} {
   const operations: GraphOp[] = [];
+  const contentArtifacts: ImmutableContentArtifactWrite[] = [];
   for (const trace of traces) {
-    const traceOps = buildCodexHookTraceOperations(trace);
+    const bundle = buildCodexHookTraceWriteBundle(trace);
+    const traceOps = bundle.operations;
     operations.push(...traceOps);
-    const fromNodeId = extractCodexSessionNodeId(traceOps);
+    contentArtifacts.push(...bundle.contentArtifacts);
+    const fromNodeId = codexSessionNodeId(trace);
     if (fromNodeId) {
       operations.push(
         ...buildSessionLinkOperations({
@@ -47,5 +57,5 @@ export function buildCodexGraphOperations(walletAddress: string, traces: CodexHo
       });
     }
   }
-  return operations;
+  return { operations, contentArtifacts };
 }

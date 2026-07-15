@@ -40,11 +40,14 @@ export interface ContextPack {
   source: 'home' | 'answer-sheets-fallback' | 'empty';
   coverageStatus: 'complete' | 'bounded' | 'incomplete';
   reproducibilityHash?: string;
+  packId?: string;
+  omissions: Array<{ source: string; reason: string; count?: number }>;
 }
 
 interface HomeContextPack {
   version?: string;
   reproducibility_hash?: string;
+  context_pack_id?: string;
   token_estimate?: number;
   anchor?: { kind?: string; surface?: string; taskSlug?: string; repoId?: string; lesson?: string };
   brief?: string;
@@ -195,6 +198,12 @@ export async function gatherContextPack(input: ContextPackInput): Promise<Contex
       source: 'home',
       coverageStatus: homeCoverageStatus(homePack),
       ...(homePack.reproducibility_hash ? { reproducibilityHash: homePack.reproducibility_hash } : {}),
+      ...(homePack.context_pack_id ? { packId: homePack.context_pack_id } : {}),
+      omissions: [
+        ...(homePack.omitted ?? []).map((row) => ({ source: row.section ?? 'unknown', reason: row.reason ?? 'unknown', ...(row.count !== undefined ? { count: row.count } : {}) })),
+        ...(homePack.omitted_items ?? []).map((row) => ({ source: `${row.section ?? 'unknown'}:${row.id ?? 'unknown'}`, reason: row.reason ?? 'unknown', count: 1 })),
+        ...(homePack.coverage?.sources ?? []).filter((row) => row.status !== 'ok').map((row) => ({ source: row.source ?? 'unknown', reason: row.reason ?? row.status ?? 'unknown', ...(row.count !== undefined ? { count: row.count } : {}) })),
+      ],
     };
   }
   const maxChars = input.maxChars ?? DEFAULT_MAX_CHARS;
@@ -227,11 +236,11 @@ export async function gatherContextPack(input: ContextPackInput): Promise<Contex
 
   if (lines.length === 0) {
     return triedHome
-      ? { text: '## RickyData context\n[CONTEXT COVERAGE — INCOMPLETE]\n- Home compiled context pack unavailable; no answer-sheet fallback matched.', sheetIds: [], source: 'empty', coverageStatus: 'incomplete' }
-      : { text: '', sheetIds: [], source: 'empty', coverageStatus: 'incomplete' };
+      ? { text: '## RickyData context\n[CONTEXT COVERAGE — INCOMPLETE]\n- Home compiled context pack unavailable; no answer-sheet fallback matched.', sheetIds: [], source: 'empty', coverageStatus: 'incomplete', omissions: [{ source: 'home-context-pack', reason: 'unavailable' }] }
+      : { text: '', sheetIds: [], source: 'empty', coverageStatus: 'incomplete', omissions: [{ source: 'context-pack', reason: 'not-configured' }] };
   }
   const warning = triedHome
     ? '[CONTEXT COVERAGE — INCOMPLETE]\n- Home compiled context pack unavailable; answer-sheet fallback only.\n'
     : '';
-  return { text: `## ${heading}\n${warning}${lines.join('\n')}`, sheetIds, source: 'answer-sheets-fallback', coverageStatus: 'incomplete' };
+  return { text: `## ${heading}\n${warning}${lines.join('\n')}`, sheetIds, source: 'answer-sheets-fallback', coverageStatus: 'incomplete', omissions: [{ source: 'home-context-pack', reason: triedHome ? 'unavailable-answer-sheet-fallback' : 'not-configured' }] };
 }

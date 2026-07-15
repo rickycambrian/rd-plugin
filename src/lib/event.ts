@@ -1,11 +1,7 @@
 import type { ClaudeCodeHookEventRecord } from 'rickydata/kfdb';
 import type { HookInput } from './hook-input.js';
-
-const MAX_STRING = 32000;
-
-function truncate(value: string): string {
-  return value.length <= MAX_STRING ? value : `${value.slice(0, MAX_STRING)}...[truncated ${value.length - MAX_STRING} chars]`;
-}
+import type { RepositorySnapshot } from 'rickydata/kfdb';
+import { observableDecisionFields } from './decision.js';
 
 function str(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
@@ -20,16 +16,18 @@ function str(value: unknown): string | undefined {
  */
 export type PendingEvent = ClaudeCodeHookEventRecord & {
   lastAssistantMessage?: string | null;
+  repository?: RepositorySnapshot;
 };
 
 /**
  * Project a raw Claude Code hook stdin object into a normalized PendingEvent.
  * Fast + allocation-light — this runs on the session hot path in capture.
  */
-export function toPendingEvent(input: HookInput, sequence: number): PendingEvent {
+export function toPendingEvent(input: HookInput, sequence: number, repository?: RepositorySnapshot): PendingEvent {
   const promptStr = str(input.prompt);
   const toolResponse = input.tool_response !== undefined ? input.tool_response : input.tool_output;
   const lastAssistant = input.last_assistant_message;
+  const decision = observableDecisionFields(input, toolResponse);
   return {
     sequence,
     hookEventName: str(input.hook_event_name) ?? 'Unknown',
@@ -39,7 +37,7 @@ export function toPendingEvent(input: HookInput, sequence: number): PendingEvent
     model: str(input.model),
     source: str(input.source),
     receivedAt: Date.now(),
-    prompt: promptStr === undefined ? undefined : truncate(promptStr),
+    prompt: promptStr,
     reason: str(input.reason),
     stopHookActive: typeof input.stop_hook_active === 'boolean' ? input.stop_hook_active : undefined,
     toolName: str(input.tool_name),
@@ -49,7 +47,10 @@ export function toPendingEvent(input: HookInput, sequence: number): PendingEvent
     permissionDecision: str(input.permission_decision),
     permissionDecisionReason: str(input.permission_decision_reason),
     lastAssistantMessage:
-      typeof lastAssistant === 'string' ? truncate(lastAssistant) : lastAssistant === null ? null : undefined,
+      typeof lastAssistant === 'string' ? lastAssistant : lastAssistant === null ? null : undefined,
+    hookPayload: input,
+    ...decision,
+    repository,
   };
 }
 
@@ -76,5 +77,15 @@ export function normalizePendingEvent(raw: unknown, index: number): PendingEvent
     permissionDecisionReason: str(e.permissionDecisionReason),
     lastAssistantMessage:
       typeof e.lastAssistantMessage === 'string' ? e.lastAssistantMessage : e.lastAssistantMessage === null ? null : undefined,
+    hookPayload: e.hookPayload,
+    decisionKind: e.decisionKind === 'ask_user' || e.decisionKind === 'tool_permission' ? e.decisionKind : undefined,
+    decisionQuestion: str(e.decisionQuestion),
+    decisionOptions: Array.isArray(e.decisionOptions) ? e.decisionOptions.filter((item): item is string => typeof item === 'string') : undefined,
+    decisionAnswer: str(e.decisionAnswer),
+    decisionPolicyRef: str(e.decisionPolicyRef),
+    repository: e.repository && typeof e.repository === 'object' ? e.repository as unknown as RepositorySnapshot : undefined,
+    contextDelivery: e.contextDelivery && typeof e.contextDelivery === 'object'
+      ? e.contextDelivery as PendingEvent['contextDelivery']
+      : undefined,
   };
 }

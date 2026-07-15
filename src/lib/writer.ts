@@ -3,7 +3,8 @@ import type { PendingEvent } from './event.js';
 import type { TranscriptSummary } from './transcript.js';
 import type { DeriveHeaders } from './derive.js';
 import { buildTraces } from './trace.js';
-import { buildGraphOperations, batchOperations, GRAPH_WRITE_TIMEOUT_MS } from './graph.js';
+import { buildGraphWriteBundle, batchOperations, GRAPH_WRITE_TIMEOUT_MS } from './graph.js';
+import { writeContentArtifacts } from './artifacts.js';
 import { writeSpool } from './spool.js';
 import { writeLegacyStream } from './legacy-stream.js';
 import { postJson } from './http.js';
@@ -28,6 +29,8 @@ export interface DirectUnitInput {
 export interface DirectUnitResult {
   ops: number;
   graphOk: boolean;
+  artifactOk: boolean;
+  artifacts: number;
   messages: number;
   tools: number;
   maxSequence: number;
@@ -46,8 +49,11 @@ export interface DirectUnitResult {
 export async function writeDirectUnit(input: DirectUnitInput): Promise<DirectUnitResult> {
   const { config, walletAddress, apiKey, deriveHeaders, claudeSessionId, events, summary, transcriptPath } = input;
   const traces = buildTraces({ walletAddress, claudeSessionId, events, summary });
-  const operations = buildGraphOperations(walletAddress, traces);
+  const bundle = buildGraphWriteBundle(walletAddress, traces);
+  const operations = bundle.operations;
   const writeUrl = `${config.api_url.replace(/\/$/, '')}/api/v1/write`;
+
+  const artifactResult = await writeContentArtifacts(config, apiKey, deriveHeaders, bundle.contentArtifacts);
 
   let graphOk = true;
   const batches = batchOperations(operations);
@@ -106,7 +112,7 @@ export async function writeDirectUnit(input: DirectUnitInput): Promise<DirectUni
     }
   }
 
-  return { ops: operations.length, graphOk, messages, tools, maxSequence, legacyOk, sessionMessageCount, sessionToolCallCount };
+  return { ops: operations.length, graphOk, artifactOk: artifactResult.ok, artifacts: artifactResult.attempted, messages, tools, maxSequence, legacyOk, sessionMessageCount, sessionToolCallCount };
 }
 
 export interface GatewayUnitInput {

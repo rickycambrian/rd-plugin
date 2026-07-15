@@ -2,21 +2,24 @@ import path from 'node:path';
 import type { CodexHookTrace } from 'rickydata/kfdb';
 import { writeFileAtomic } from '../lib/fsutil.js';
 import { batchOperations } from '../lib/graph.js';
-import { buildCodexGraphOperations } from './graph.js';
+import {
+  artifactSpoolFileName,
+  contentArtifactRecord,
+  graphBatchRecord,
+  serializeBoundedSpoolRecord,
+  splitGraphBatchByBytes,
+  type ContentArtifactSpoolRecord,
+  type GraphBatchSpoolRecord,
+  type SpoolRecordIdentity,
+} from '../lib/spool-record.js';
+import { buildCodexGraphWriteBundle } from './graph.js';
 
 /**
- * Body written to a Codex spool file. `spoolVersion` 2 carries `graphOperations`
- * — the exact schema-v3 `/api/v1/write` ops the direct sink would write for this
- * trace (CodexHookTrace ops + D6 session-link). By construction these are
- * byte-identical to the direct-sink ops for the same event stream, so a Codex
- * session captured through the gateway yields the same CodexSession node id as
- * one captured locally. A distinct `codex-trace-` filename prefix keeps these
- * files from being swept by the Claude Code (`trace-*`) v2 ingest path.
+ * Codex uses the same bounded v3 two-record protocol as Claude Code: immutable
+ * artifacts first, then graph-only batches. A distinct graph filename prefix
+ * keeps Codex and Claude Code replay lanes unambiguous.
  */
-export interface CodexSpoolBody extends CodexHookTrace {
-  spoolVersion: 2;
-  graphOperations: Array<Record<string, unknown>>;
-}
+export type CodexSpoolBody = ContentArtifactSpoolRecord | GraphBatchSpoolRecord;
 
 export function codexSpoolFileName(codexSessionId: string, turnIndex: number, batchIndex = 0): string {
   const safe = String(codexSessionId || 'unknown').replace(/[^A-Za-z0-9_.-]/g, '_');
@@ -33,13 +36,27 @@ export function codexSpoolFileName(codexSessionId: string, turnIndex: number, ba
 export function writeCodexSpool(spoolDir: string, traces: CodexHookTrace[]): string[] {
   const written: string[] = [];
   for (const trace of traces) {
-    const graphOperations = buildCodexGraphOperations(trace.walletAddress, [trace]);
-    const batches = batchOperations(graphOperations);
-    if (batches.length === 0) batches.push([]);
+    const bundle = buildCodexGraphWriteBundle(trace.walletAddress, [trace]);
+    const identity: SpoolRecordIdentity = {
+      traceKind: 'codex',
+      walletAddress: trace.walletAddress,
+      traceSessionId: trace.codexSessionId,
+      turnIndex: trace.turnIndex,
+    };
+    const artifacts = [...new Map(bundle.contentArtifacts.map((artifact) => [artifact.key, artifact])).values()];
+    artifacts.forEach((artifact, artifactIndex) => {
+      const body = contentArtifactRecord(identity, artifact);
+      const filePath = path.join(spoolDir, artifactSpoolFileName(identity, artifact, artifactIndex));
+      writeFileAtomic(filePath, serializeBoundedSpoolRecord(body));
+      written.push(filePath);
+    });
+    const countBatches = batchOperations(bundle.operations);
+    if (countBatches.length === 0) countBatches.push([]);
+    const batches = countBatches.flatMap((batch) => splitGraphBatchByBytes(identity, batch));
     batches.forEach((batch, batchIndex) => {
-      const body: CodexSpoolBody = { ...trace, spoolVersion: 2, graphOperations: batch };
+      const body = graphBatchRecord(identity, batch);
       const filePath = path.join(spoolDir, codexSpoolFileName(trace.codexSessionId, trace.turnIndex, batchIndex));
-      writeFileAtomic(filePath, JSON.stringify(body));
+      writeFileAtomic(filePath, serializeBoundedSpoolRecord(body));
       written.push(filePath);
     });
   }

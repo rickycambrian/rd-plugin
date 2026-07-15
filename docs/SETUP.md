@@ -80,6 +80,10 @@ key is never sent. The injected pack includes every selected section plus its
 selected/omitted manifests, source failures, coverage status, and
 reproducibility hash. Home is preferred because it compiles the connected wiki,
 knowledge graph, Mission Control, verification, and human-decision context.
+After injection, the exact rendered bytes, pack hash, coverage status, and
+explicit omissions are emitted as a canonical `ContextDeliveryReceipt` linked
+to the session. This receipt is independent of whether the source was Home or
+the bounded fallback.
 
 If Home cannot return a valid `context-pack/v1` within the hook's five-second
 budget, rd-plugin falls back to its bounded answer-sheet retrieval. That block

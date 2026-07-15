@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/capture.mjs && node ${CLAUDE_PLUGIN_ROOT}/dist/session-start.mjs",
+            "command": "tmp=$(mktemp); cat > \"$tmp\"; node ${CLAUDE_PLUGIN_ROOT}/dist/capture.mjs < \"$tmp\"; node ${CLAUDE_PLUGIN_ROOT}/dist/session-start.mjs < \"$tmp\"; rm -f \"$tmp\"",
             "timeout": 10
           }
         ]
@@ -23,6 +23,18 @@
       }
     ],
     "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/capture.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
       {
         "matcher": "*",
         "hooks": [

@@ -12,6 +12,9 @@ import { writeAll } from './lib/stdout.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { appendPending, pendingCount } from './lib/pending.js';
+import { toPendingEvent } from './lib/event.js';
+import { ownedRepository } from './codex/repo.js';
 
 /** Pending logs from sessions that died without a SessionEnd are GC'd here. */
 const PENDING_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -44,6 +47,7 @@ async function main(): Promise<void> {
 
   const cwd = input.cwd || process.cwd();
   const workspace = path.basename(cwd) || cwd;
+  const repo = await ownedRepository(cwd, null);
   const language = detectLanguage(cwd);
   const query = [workspace, language, 'session start'].filter(Boolean).join(' ');
 
@@ -71,17 +75,41 @@ async function main(): Promise<void> {
     timeoutMs: 8500,
     homeUrl: config.home_url,
     homeToken,
-    repoId: workspace,
+    repoId: repo?.repository ?? workspace,
   });
 
   if (pack.text) {
     await emitContext(pack.text);
+    const sessionId = typeof input.session_id === 'string' && input.session_id ? input.session_id : 'unknown';
+    const repository = repo ? {
+      owner: repo.owner,
+      repository: repo.repository,
+      fullName: `${repo.owner}/${repo.repository}`,
+      remoteUrl: repo.remoteUrl,
+      branch: repo.branch,
+      commitSha: repo.commitSha,
+    } : undefined;
+    const deliveryEvent = toPendingEvent({ ...input, hook_event_name: 'ContextDelivery' }, pendingCount(sessionId), repository);
+    deliveryEvent.contextDelivery = {
+      deliveryKey: `session-start:${sessionId}`,
+      ...(pack.packId ? { packId: pack.packId } : {}),
+      ...(pack.reproducibilityHash && /^[0-9a-f]{64}$/.test(pack.reproducibilityHash)
+        ? { packHash: `sha256:${pack.reproducibilityHash}` as const }
+        : {}),
+      renderedContent: pack.text,
+      interface: 'claude-code-session-start',
+      coverageStatus: pack.coverageStatus,
+      omissions: pack.omissions,
+      deliveredAt: new Date().toISOString(),
+    };
+    appendPending(sessionId, deliveryEvent);
     log('info', 'session-start injected', {
       sheetIds: pack.sheetIds.length,
       workspace,
       contextSource: pack.source,
       coverageStatus: pack.coverageStatus,
       reproducibilityHash: pack.reproducibilityHash,
+      deliveryReceiptQueued: true,
     });
   }
 }
