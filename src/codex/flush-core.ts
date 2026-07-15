@@ -60,6 +60,8 @@ export async function runCodexFlush(
     const state = readState();
     const prior = flushedEntry(state, codexSessionId);
     if (prior.fingerprint === fingerprint && !opts.final) {
+      // Refresh updatedAt so the recovery sweep stops re-selecting this log.
+      await commitFlushedEntry(codexSessionId, {});
       log('debug', 'codex flush skipped: unchanged fingerprint', { sessionId: codexSessionId });
       return;
     }

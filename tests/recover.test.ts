@@ -41,4 +41,31 @@ describe('selectQuietPendingLogs', () => {
   it('returns empty for a missing directory', () => {
     expect(selectQuietPendingLogs(path.join(makeDir(), 'nope'), Date.now())).toEqual([]);
   });
+
+  it('skips logs already flushed after their last event, so the capped sweep advances', () => {
+    const dir = makeDir();
+    const now = Date.now();
+    // More quiet logs than the cap; the oldest ones already have a flush record
+    // newer than their mtime. Pure oldest-first would re-select those forever
+    // and never reach the unflushed tail.
+    const flushed: Record<string, { updatedAt?: string }> = {};
+    for (let i = 0; i < RECOVER_MAX_PER_START; i++) {
+      touch(dir, `done-${i}.jsonl`, RECOVER_MIN_AGE_MS + 10_000_000 + i * 60_000, now);
+      flushed[`done-${i}`] = { updatedAt: new Date(now - 1_000).toISOString() };
+    }
+    touch(dir, 'stranded.jsonl', RECOVER_MIN_AGE_MS + 3_600_000, now);
+    expect(selectQuietPendingLogs(dir, now, flushed)).toEqual(['stranded']);
+  });
+
+  it('recovers logs whose events postdate their flush record or whose record is malformed', () => {
+    const dir = makeDir();
+    const now = Date.now();
+    touch(dir, 'grew-after-flush.jsonl', RECOVER_MIN_AGE_MS + 3_600_000, now);
+    touch(dir, 'bad-record.jsonl', RECOVER_MIN_AGE_MS + 7_200_000, now);
+    const flushed = {
+      'grew-after-flush': { updatedAt: new Date(now - RECOVER_MIN_AGE_MS - 7_200_000).toISOString() },
+      'bad-record': { updatedAt: 'not-a-date' },
+    };
+    expect(selectQuietPendingLogs(dir, now, flushed)).toEqual(['bad-record', 'grew-after-flush']);
+  });
 });

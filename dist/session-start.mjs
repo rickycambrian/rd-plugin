@@ -3104,15 +3104,32 @@ var CODEX_PENDING_DIR = path4.join(STATE_DIR, "codex-pending");
 import { spawn } from "node:child_process";
 import fs4 from "node:fs";
 import path5 from "node:path";
+
+// src/lib/flush-lock.ts
+var FLUSH_LOCK_STALE_MS = 10 * 60 * 1e3;
+
+// src/lib/state.ts
+function readState() {
+  const state = readJsonFile(STATE_FILE, { flushed: {} });
+  if (!state.flushed || typeof state.flushed !== "object") state.flushed = {};
+  return state;
+}
+
+// src/lib/recover.ts
 var RECOVER_MIN_AGE_MS = 6 * 60 * 60 * 1e3;
 var RECOVER_MAX_PER_START = 8;
-function selectQuietPendingLogs(dir, nowMs, minAgeMs = RECOVER_MIN_AGE_MS, cap = RECOVER_MAX_PER_START) {
+function needsRecovery(mtimeMs, entry) {
+  if (!entry) return true;
+  const flushedAt = Date.parse(entry.updatedAt ?? "");
+  return !Number.isFinite(flushedAt) || mtimeMs > flushedAt;
+}
+function selectQuietPendingLogs(dir, nowMs, flushed = {}, minAgeMs = RECOVER_MIN_AGE_MS, cap = RECOVER_MAX_PER_START) {
   if (!fs4.existsSync(dir)) return [];
-  return fs4.readdirSync(dir).filter((f) => f.endsWith(".jsonl")).map((f) => ({ sessionId: f.slice(0, -".jsonl".length), mtimeMs: fs4.statSync(path5.join(dir, f)).mtimeMs })).filter((e) => nowMs - e.mtimeMs > minAgeMs).sort((a, b) => a.mtimeMs - b.mtimeMs).slice(0, cap).map((e) => e.sessionId);
+  return fs4.readdirSync(dir).filter((f) => f.endsWith(".jsonl")).map((f) => ({ sessionId: f.slice(0, -".jsonl".length), mtimeMs: fs4.statSync(path5.join(dir, f)).mtimeMs })).filter((e) => nowMs - e.mtimeMs > minAgeMs && needsRecovery(e.mtimeMs, flushed[e.sessionId])).sort((a, b) => a.mtimeMs - b.mtimeMs).slice(0, cap).map((e) => e.sessionId);
 }
 function recoverQuietPendingLogs(dir, flushScriptPath) {
   try {
-    const quiet = selectQuietPendingLogs(dir, Date.now());
+    const quiet = selectQuietPendingLogs(dir, Date.now(), readState().flushed);
     for (const sessionId of quiet) {
       const child = spawn(process.execPath, [flushScriptPath, sessionId], {
         detached: true,

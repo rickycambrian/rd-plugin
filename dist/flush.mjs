@@ -4876,6 +4876,7 @@ async function main() {
     const state = readState();
     const prior = flushedEntry(state, claudeSessionId);
     if (prior.fingerprint === fingerprint && !final) {
+      await commitFlushedEntry(claudeSessionId, {});
       log("debug", "flush skipped: unchanged fingerprint", { sessionId: claudeSessionId });
       return;
     }

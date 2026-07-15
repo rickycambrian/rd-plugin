@@ -4678,6 +4678,7 @@ async function runCodexFlush(codexSessionId, opts, env = process.env) {
     const state = readState();
     const prior = flushedEntry(state, codexSessionId);
     if (prior.fingerprint === fingerprint && !opts.final) {
+      await commitFlushedEntry(codexSessionId, {});
       log("debug", "codex flush skipped: unchanged fingerprint", { sessionId: codexSessionId });
       return;
     }
