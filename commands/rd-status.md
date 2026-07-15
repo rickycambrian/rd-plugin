@@ -19,7 +19,29 @@ Report the current state of rd-plugin as a compact dashboard. Read `~/.rickydata
 
 4. **Tracking** — from config: `track_messages`, `track_files`, `track_git`, and top-level `enabled`. Note any `excluded_directories`.
 
-5. **Queue** — count files in `~/.rickydata/queue/rd-plugin/` (offline retry backlog).
+5. **Queue & write health** — the three invariants of a healthy write pipeline (all should be 0):
+   - **Retry queue**: count `*.json` files in `~/.rickydata/queue/rd-plugin/` (offline retry backlog; nonzero is fine transiently, drains on next flush).
+   - **Dead-letter**: count files in `~/.rickydata/queue-failed/rd-plugin/` (writes that exhausted retries — nonzero means data is stranded and needs manual replay).
+   - **Unflushed quiet logs**: pending logs whose events postdate their last flush record and have been quiet >6h (the recovery sweeper's target set; persistently nonzero means recovery is not keeping up). Compute with:
+
+```bash
+node --input-type=module -e "
+import fs from 'node:fs'; import path from 'node:path'; import os from 'node:os';
+const base = path.join(os.homedir(), '.rickydata/state/rd-plugin');
+let flushed = {}; try { flushed = JSON.parse(fs.readFileSync(path.join(base, 'state.json'), 'utf8')).flushed ?? {}; } catch {}
+const now = Date.now();
+for (const dir of ['pending', 'codex-pending']) {
+  const d = path.join(base, dir); let n = 0;
+  try { for (const f of fs.readdirSync(d)) {
+    if (!f.endsWith('.jsonl')) continue;
+    const m = fs.statSync(path.join(d, f)).mtimeMs;
+    if (now - m <= 6*3600*1000) continue;
+    const t = Date.parse(flushed[f.slice(0, -6)]?.updatedAt ?? '');
+    if (!Number.isFinite(t) || m > t) n++;
+  } } catch {}
+  console.log(dir + ' unflushed quiet: ' + n);
+}"
+```
 
 6. **Codex** — read `~/.codex/config.toml` (if present) and report:
    - **Wired** — whether any hook `command = "..."` line references `dist/codex-capture.mjs`. Report wired/not-wired (and, if partially wired, which of the 5 events — `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `Stop` — are missing).
@@ -48,8 +70,10 @@ Tracking
   Messages: on   Files: on   Git: on
   Excluded: (none)
 
-Queue
-  Pending: 0
+Write health
+  Retry queue:   0
+  Dead-letter:   0
+  Unflushed quiet logs: 0 (claude) / 0 (codex)
 
 Codex
   Wired:  yes (5/5 events)
@@ -60,4 +84,4 @@ Config: ~/.rickydata/config.json
 Logs:   ~/.rickydata/logs/rd-plugin.log
 ```
 
-If anything is wrong, list a specific next action (usually: re-run `/rd-setup`, check the sink resolution, or `node ${CLAUDE_PLUGIN_ROOT}/dist/setup-codex.mjs` for unwired Codex).
+If anything is wrong, list a specific next action (usually: re-run `/rd-setup`, check the sink resolution, or `node ${CLAUDE_PLUGIN_ROOT}/dist/setup-codex.mjs` for unwired Codex). For nonzero dead-letter: inspect the entry's `url`/`body`/`lastError` and replay it with the stored method + Bearer + `X-Derive-Session-Id`/`X-Derive-Key` headers from `~/.rickydata/derive-session.json`; delete the file only after a 2xx. For persistent unflushed quiet logs: run `node ${CLAUDE_PLUGIN_ROOT}/dist/flush.mjs <sessionId>` (or `codex-flush.mjs`) directly and check `~/.rickydata/logs/rd-plugin.log` for the failure.
