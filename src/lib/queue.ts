@@ -131,12 +131,16 @@ export interface DrainOptions extends QueueDirs {
 }
 
 function classifyStatus(status: number): 'permanent' | 'transient' {
-  // 404 is NOT permanent for this queue: legacy track-* posts 404 until the
-  // post that creates their parent session record lands (observed live
-  // 2026-07-13 — a 404'd track-message replayed clean minutes later). Ordered
-  // oldest-first replay usually resolves it by the next drain; the transient
-  // attempt cap still bounds a true dead endpoint.
-  if (status >= 400 && status < 500 && status !== 404 && status !== 408 && status !== 429) return 'permanent';
+  // Several 4xx codes flap on KFDB and must NOT dead-letter real data early:
+  // 404 — legacy track-* posts 404 until the post creating their parent session
+  //   record lands (observed live 2026-07-13; replayed clean minutes later);
+  // 405 — observed live 2026-07-15 on a kv artifact PUT that succeeded verbatim
+  //   on manual replay;
+  // 401/403 — an expired sign-to-derive session rejects until the next drain
+  //   re-derives. Only genuinely malformed requests (400/413/422/…) stay
+  //   permanent; the transient attempt cap still bounds a true dead endpoint.
+  const flappy4xx = new Set([401, 403, 404, 405, 408, 429]);
+  if (status >= 400 && status < 500 && !flappy4xx.has(status)) return 'permanent';
   return 'transient';
 }
 

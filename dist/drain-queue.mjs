@@ -3178,7 +3178,8 @@ function contentHashOf(request) {
 ${JSON.stringify(request.body)}`);
 }
 function classifyStatus(status) {
-  if (status >= 400 && status < 500 && status !== 404 && status !== 408 && status !== 429) return "permanent";
+  const flappy4xx = /* @__PURE__ */ new Set([401, 403, 404, 405, 408, 429]);
+  if (status >= 400 && status < 500 && !flappy4xx.has(status)) return "permanent";
   return "transient";
 }
 function backoffMs(attempts) {

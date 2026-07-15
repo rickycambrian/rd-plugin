@@ -137,6 +137,19 @@ describe('drainQueue', () => {
     expect(fs.readdirSync(deadDir)).toHaveLength(0);
   });
 
+  it.each([401, 403, 405])('treats flappy KFDB %i as transient, not permanent', async (status) => {
+    // 405 observed live 2026-07-15 on a kv artifact PUT that succeeded verbatim
+    // on manual replay; 401/403 flap while a sign-to-derive session is expired.
+    enqueue({ url: 'http://x/w', body: { operations: [1] }, requiresBearer: true, requiresDerive: true }, dirs());
+    const file = queuedFiles()[0];
+    fs.writeFileSync(path.join(dir, file), JSON.stringify({ ...readEntry(file), attempts: 2 }));
+    postJsonMock.mockResolvedValue({ ok: false, status, text: 'flap', json: null });
+    const result = await drainQueue(AUTH, 500, dirs());
+    expect(result.deadLettered).toBe(0);
+    expect(queuedFiles()).toHaveLength(1);
+    expect(fs.readdirSync(deadDir)).toHaveLength(0);
+  });
+
   it('splits a timed-out operations batch into ordered halves', async () => {
     const operations = Array.from({ length: 120 }, (_, i) => ({ op: i }));
     enqueue({ url: 'http://x/w', body: { operations, skip_embedding: true }, requiresBearer: true, requiresDerive: true }, dirs());
