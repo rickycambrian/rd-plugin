@@ -3,6 +3,7 @@ import { loadConfig, resolveSink, shouldTrack } from './lib/config.js';
 import { setLogLevel, log } from './lib/log.js';
 import { gatherContextPack } from './lib/context-pack.js';
 import { getDeriveHeaders, type DeriveHeaders } from './lib/derive.js';
+import { kfdbAuthFromConfig } from './lib/kfdb-auth.js';
 import { mintHomeWalletToken } from './lib/home-auth.js';
 import { pruneStaleFiles } from './lib/fsutil.js';
 import { PENDING_DIR } from './lib/paths.js';
@@ -68,8 +69,7 @@ async function main(): Promise<void> {
 
   const pack = await gatherContextPack({
     apiUrl: config.api_url,
-    apiKey: config.api_key ?? '',
-    deriveHeaders,
+    auth: kfdbAuthFromConfig(config, deriveHeaders),
     query,
     context: language ? { language } : {},
     timeoutMs: 8500,

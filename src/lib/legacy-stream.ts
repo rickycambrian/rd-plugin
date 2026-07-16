@@ -3,13 +3,12 @@ import { postJson } from './http.js';
 import { enqueue } from './queue.js';
 import { sha256Hex } from './fsutil.js';
 import type { PendingEvent } from './event.js';
-import type { DeriveHeaders } from './derive.js';
+import { kfdbAuthHeaders, type KfdbAuth } from './kfdb-auth.js';
 import type { TranscriptSummary } from './transcript.js';
 
 export interface LegacyStreamConfig {
   apiUrl: string;
-  apiKey: string;
-  deriveHeaders: DeriveHeaders;
+  auth: KfdbAuth;
   trackMessages: boolean;
   trackFiles: boolean;
   trackGit: boolean;
@@ -116,7 +115,7 @@ async function post(
   queueOnFailure: boolean,
 ): Promise<boolean> {
   const url = `${cfg.apiUrl.replace(/\/$/, '')}/api/v1/plugin/${pathName}`;
-  const headers = { Authorization: `Bearer ${cfg.apiKey}`, ...cfg.deriveHeaders };
+  const headers = kfdbAuthHeaders(cfg.auth, 'POST', url);
   try {
     const result = await postJson(url, body, headers, 15000);
     if (result.ok) return true;

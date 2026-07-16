@@ -6,6 +6,7 @@ import type { PendingEvent } from './lib/event.js';
 import { parseTranscriptSummary, findTranscriptForSession, type TranscriptSummary } from './lib/transcript.js';
 import { getDeriveHeaders, addressFromPrivateKey, type DeriveHeaders } from './lib/derive.js';
 import { drainQueue } from './lib/queue.js';
+import { kfdbAuthFromConfig } from './lib/kfdb-auth.js';
 import { writeDirectUnit, writeGatewayUnit } from './lib/writer.js';
 import { acquireFlushLock, acquireFlushLockOrWait, releaseFlushLock } from './lib/flush-lock.js';
 import { PENDING_DIR } from './lib/paths.js';
@@ -137,20 +138,20 @@ async function flushDirect(
     log('warn', 'direct sink but no private_key', { sessionId: claudeSessionId });
     return;
   }
-  const apiKey = config.api_key ?? '';
   const walletAddress = addressFromPrivateKey(config.private_key).toLowerCase();
 
   let deriveHeaders: DeriveHeaders | undefined;
   try {
-    deriveHeaders = await getDeriveHeaders({ apiUrl: config.api_url, apiKey, privateKey: config.private_key });
+    deriveHeaders = await getDeriveHeaders({ apiUrl: config.api_url, apiKey: config.api_key, privateKey: config.private_key });
   } catch (err) {
     log('warn', 'derive failed; queueing graph only', { sessionId: claudeSessionId, error: (err as Error).message });
   }
+  const auth = kfdbAuthFromConfig(config, deriveHeaders);
 
   // Opportunistic queue drain (best-effort) once we have auth.
   if (deriveHeaders) {
     try {
-      const drained = await drainQueue({ apiKey, deriveHeaders });
+      const drained = await drainQueue(auth);
       if (drained.sent > 0 || drained.remaining > 0) log('info', 'queue drained', drained as unknown as Record<string, unknown>);
     } catch { /* best-effort */ }
   }
@@ -158,8 +159,7 @@ async function flushDirect(
   const result = await writeDirectUnit({
     config,
     walletAddress,
-    apiKey,
-    deriveHeaders,
+    auth,
     claudeSessionId,
     events,
     summary,

@@ -1,5 +1,5 @@
 import type { RdConfig } from '../lib/config.js';
-import type { DeriveHeaders } from '../lib/derive.js';
+import { kfdbAuthHeaders, type KfdbAuth } from '../lib/kfdb-auth.js';
 import { batchOperations, GRAPH_WRITE_TIMEOUT_MS } from '../lib/graph.js';
 import { postJson } from '../lib/http.js';
 import { enqueue } from '../lib/queue.js';
@@ -14,8 +14,7 @@ export interface CodexDirectUnitInput {
   config: RdConfig;
   walletAddress: string;
   agentId: string;
-  apiKey: string;
-  deriveHeaders?: DeriveHeaders;
+  auth: KfdbAuth;
   codexSessionId: string;
   events: CodexPendingEvent[];
 }
@@ -35,13 +34,14 @@ export interface CodexDirectUnitResult {
  * CodexSession family replaces it (SPEC-000 WS-F ruling, Option A).
  */
 export async function writeCodexDirectUnit(input: CodexDirectUnitInput): Promise<CodexDirectUnitResult> {
-  const { config, walletAddress, agentId, apiKey, deriveHeaders, codexSessionId, events } = input;
+  const { config, walletAddress, agentId, auth, codexSessionId, events } = input;
+  const deriveHeaders = auth.deriveHeaders;
   const traces = buildCodexTraces({ walletAddress, agentId, codexSessionId, events });
   const bundle = buildCodexGraphWriteBundle(walletAddress, traces);
   const operations = bundle.operations;
   const writeUrl = `${config.api_url.replace(/\/$/, '')}/api/v1/write`;
 
-  const artifactResult = await writeContentArtifacts(config, apiKey, deriveHeaders, bundle.contentArtifacts);
+  const artifactResult = await writeContentArtifacts(config, auth, bundle.contentArtifacts);
 
   let graphOk = true;
   const batches = batchOperations(operations);
@@ -56,7 +56,7 @@ export async function writeCodexDirectUnit(input: CodexDirectUnitInput): Promise
       continue;
     }
     try {
-      const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, GRAPH_WRITE_TIMEOUT_MS);
+      const result = await postJson(writeUrl, body, kfdbAuthHeaders(auth, 'POST', writeUrl), GRAPH_WRITE_TIMEOUT_MS);
       if (!result.ok) {
         enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true, dedupeKey });
         graphOk = false;

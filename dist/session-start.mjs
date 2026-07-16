@@ -149,181 +149,8 @@ function postJson(url, body, headers2, timeoutMs = 15e3, method = "POST") {
   return requestJson(url, body, headers2, timeoutMs, method);
 }
 
-// src/lib/context-pack.ts
-import { createHash } from "node:crypto";
-var DEFAULT_MAX_CHARS = 4e3;
-function homeCoverageStatus(pack) {
-  const status = pack.coverage?.status;
-  return status === "complete" || status === "bounded" || status === "incomplete" ? status : "incomplete";
-}
-function renderHomePack(pack) {
-  const status = homeCoverageStatus(pack);
-  const anchor = pack.anchor ?? {};
-  const anchorKey = anchor.surface ?? anchor.taskSlug ?? anchor.repoId ?? anchor.lesson ?? "unknown";
-  const lines = [
-    `## RickyData compiled context \u2014 ${anchor.kind ?? "unknown"}:${anchorKey}`,
-    `[CONTEXT COVERAGE \u2014 ${status.toUpperCase()}]`,
-    `Reproducibility hash: ${pack.reproducibility_hash ?? "unavailable"}; token estimate: ${pack.token_estimate ?? "unavailable"}`
-  ];
-  if (pack.brief?.trim()) lines.push("", pack.brief.trim());
-  const failed = (pack.coverage?.sources ?? []).filter((source) => source.status === "error");
-  if (!pack.coverage) lines.push("- SOURCE FAILED: context_pack_coverage \u2014 legacy pack omitted source-health metadata");
-  for (const source of failed) lines.push(`- SOURCE FAILED: ${source.source ?? "unknown"} \u2014 ${source.reason ?? "unknown error"}`);
-  const section = (title, values) => {
-    if (values.length > 0) lines.push("", `${title}:`, ...values.map((value) => `- ${value}`));
-  };
-  section("Invariants", (pack.invariants ?? []).map((row) => `${row.text ?? ""} [${row.source_ref ?? "source unavailable"}]`));
-  section("Verification gates", (pack.verification ?? []).map((row) => `${row.kind ?? "gate"}: ${row.status ?? "unknown"}${row.evidence_ref ? ` [${row.evidence_ref}]` : ""}`));
-  section("Work in progress", (pack.work_in_progress ?? []).map((row) => {
-    const refs = [row.issue_ref, row.issue_state, ...row.linked_prs ?? [], row.session_artifacts !== void 0 ? `${row.session_artifacts} session artifact(s)` : void 0].filter(Boolean);
-    return `${row.name ?? row.slug ?? "unnamed"} [${row.slug ?? "unknown"}]${refs.length ? ` \u2014 ${refs.join("; ")}` : ""}`;
-  }));
-  section("Knowledge (wiki)", (pack.wiki ?? []).flatMap((row) => [
-    `${row.title ?? row.slug ?? "untitled"}${row.status === "stale" ? " (STALE)" : ""}: ${row.summary ?? ""} [wiki:${row.slug ?? "unknown"}]`,
-    ...(row.key_claims ?? []).map((claim) => `  ${claim.text ?? ""} [${claim.source_ref ?? "source unavailable"}; ${claim.confidence_tier ?? "unknown"}]`)
-  ]));
-  section("Lessons", (pack.lessons ?? []).map((row) => `${(row.text ?? "").replace(/\n+/g, " ")} [${row.source_ref ?? "source unavailable"}; confidence ${row.confidence ?? "unknown"}]`));
-  section("Recent human decisions", (pack.decisions ?? []).map((row) => `${row.title ?? "untitled"} (${row.action ?? "unknown"}, ${row.decided_at ?? "date unavailable"}) [${row.source_ref_id ?? "source unavailable"}]`));
-  section("Known traps", (pack.traps ?? []).map((row) => `${row.name ?? "unnamed"}: ${row.hook ?? ""}`));
-  section("Open questions", (pack.open_questions ?? []).map((row) => `${row.question ?? ""} [${row.id ?? "id unavailable"}]`));
-  section("Selected context manifest", (pack.selected_items ?? []).map((row) => `${row.section ?? "unknown"}:${row.id ?? "unknown"} sha256=${row.content_hash ?? "unavailable"} tokens=${row.token_estimate ?? "unknown"}${row.rank_reason ? ` rank=${row.rank_reason}` : ""}`));
-  section("Context exclusions", [
-    ...(pack.omitted ?? []).map((row) => `${row.count ?? 0} ${row.section ?? "unknown"} item(s): ${row.reason ?? "unknown"}`),
-    ...(pack.omitted_items ?? []).map((row) => `${row.section ?? "unknown"}:${row.id ?? "unknown"}: ${row.reason ?? "unknown"}`)
-  ]);
-  return lines.join("\n");
-}
-async function fetchHomePack(input) {
-  if (!input.homeUrl || !input.homeToken || !input.repoId) return null;
-  const params = new URLSearchParams({
-    repo: input.repoId,
-    budget: String(input.homeBudget ?? 24e3),
-    consumer: "plugin"
-  });
-  if (input.taskSlug) params.set("task", input.taskSlug);
-  const controller = new AbortController();
-  const timeoutMs = Math.max(500, Math.min(input.timeoutMs ?? 8500, 7500));
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${input.homeUrl.replace(/\/$/, "")}/api/context-pack?${params}`, {
-      headers: { Accept: "application/json", Authorization: `Bearer ${input.homeToken}` },
-      signal: controller.signal
-    });
-    if (!res.ok) return null;
-    const pack = await res.json();
-    return pack.version === "context-pack/v1" ? pack : null;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-function headers(apiKey, derive) {
-  const h = { Accept: "application/json" };
-  if (apiKey) h.Authorization = `Bearer ${apiKey}`;
-  if (derive) Object.assign(h, derive);
-  return h;
-}
-function sheetId(sheet) {
-  return sheet.sheet_id ?? sheet.id;
-}
-async function matchSheets(input) {
-  const text = input.query.trim();
-  if (!text) return [];
-  const base = input.apiUrl.replace(/\/$/, "");
-  const body = { error_text: text, limit: 5, min_confidence: 0, include_public: true };
-  if (input.context && Object.keys(input.context).length > 0) body.context = input.context;
-  const res = await postJson(`${base}/api/v1/answer-sheets/match`, body, headers(input.apiKey, input.deriveHeaders), input.timeoutMs ?? 5e3);
-  if (!res.ok || !res.json || typeof res.json !== "object") return [];
-  const matches = res.json.matches;
-  return Array.isArray(matches) ? matches : [];
-}
-async function listByCategory(input, category, limit) {
-  const base = input.apiUrl.replace(/\/$/, "");
-  const params = new URLSearchParams({ problem_category: category, min_confidence: "0", limit: String(limit) });
-  const url = `${base}/api/v1/answer-sheets?${params.toString()}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? 5e3);
-  try {
-    const res = await fetch(url, { method: "GET", headers: headers(input.apiKey, input.deriveHeaders), signal: controller.signal });
-    if (!res.ok) return [];
-    const json = await res.json();
-    return Array.isArray(json.items) ? json.items : [];
-  } catch {
-    return [];
-  } finally {
-    clearTimeout(timer);
-  }
-}
-function formatLine(sheet) {
-  const title = (sheet.title || "").trim();
-  const summary = (sheet.solution_summary || "").trim();
-  if (!title && !summary) return null;
-  if (title && summary) return `- ${title}: ${summary}`;
-  return `- ${title || summary}`;
-}
-async function gatherContextPack(input) {
-  const triedHome = Boolean(input.homeUrl && input.homeToken && input.repoId);
-  const homePack = await fetchHomePack(input);
-  if (homePack) {
-    const shaRef = (value) => {
-      if (!value) return void 0;
-      const normalized = value.startsWith("sha256:") ? value : `sha256:${value}`;
-      return /^sha256:[0-9a-f]{64}$/.test(normalized) ? normalized : void 0;
-    };
-    const selectedManifestHash = shaRef(homePack.selected_manifest_hash) ?? `sha256:${createHash("sha256").update(JSON.stringify(homePack.selected_items ?? [])).digest("hex")}`;
-    return {
-      text: renderHomePack(homePack),
-      sheetIds: [],
-      source: "home",
-      coverageStatus: homeCoverageStatus(homePack),
-      ...homePack.reproducibility_hash ? { reproducibilityHash: homePack.reproducibility_hash } : {},
-      ...homePack.context_pack_id ? { packId: homePack.context_pack_id } : {},
-      ...shaRef(homePack.policy_hash) ? { policyHash: shaRef(homePack.policy_hash) } : {},
-      selectedManifestHash,
-      ...homePack.corpus_watermark ? { corpusWatermark: homePack.corpus_watermark } : {},
-      omissions: [
-        ...(homePack.omitted ?? []).map((row) => ({ source: row.section ?? "unknown", reason: row.reason ?? "unknown", ...row.count !== void 0 ? { count: row.count } : {} })),
-        ...(homePack.omitted_items ?? []).map((row) => ({ source: `${row.section ?? "unknown"}:${row.id ?? "unknown"}`, reason: row.reason ?? "unknown", count: 1 })),
-        ...(homePack.coverage?.sources ?? []).filter((row) => row.status !== "ok").map((row) => ({ source: row.source ?? "unknown", reason: row.reason ?? row.status ?? "unknown", ...row.count !== void 0 ? { count: row.count } : {} }))
-      ]
-    };
-  }
-  const maxChars = input.maxChars ?? DEFAULT_MAX_CHARS;
-  const fallbackInput = triedHome ? { ...input, timeoutMs: Math.min(input.timeoutMs ?? 5e3, 700) } : input;
-  const [matches, prefs, decisions] = await Promise.all([
-    matchSheets(fallbackInput).catch(() => []),
-    listByCategory(fallbackInput, "user_preference", 8).catch(() => []),
-    listByCategory(fallbackInput, "project_decision", 5).catch(() => [])
-  ]);
-  const seen = /* @__PURE__ */ new Set();
-  const sheetIds = [];
-  const lines = [];
-  let used = 0;
-  const heading = input.heading ?? "Remembered context (KFDB)";
-  for (const sheet of [...prefs, ...decisions, ...matches]) {
-    const id = sheetId(sheet);
-    if (id) {
-      if (seen.has(id)) continue;
-      seen.add(id);
-    }
-    const line = formatLine(sheet);
-    if (!line) continue;
-    if (used + line.length + 1 > maxChars) break;
-    lines.push(line);
-    used += line.length + 1;
-    if (id) sheetIds.push(id);
-  }
-  if (lines.length === 0) {
-    return triedHome ? { text: "## RickyData context\n[CONTEXT COVERAGE \u2014 INCOMPLETE]\n- Home compiled context pack unavailable; no answer-sheet fallback matched.", sheetIds: [], source: "empty", coverageStatus: "incomplete", omissions: [{ source: "home-context-pack", reason: "unavailable" }] } : { text: "", sheetIds: [], source: "empty", coverageStatus: "incomplete", omissions: [{ source: "context-pack", reason: "not-configured" }] };
-  }
-  const warning = triedHome ? "[CONTEXT COVERAGE \u2014 INCOMPLETE]\n- Home compiled context pack unavailable; answer-sheet fallback only.\n" : "";
-  return { text: `## ${heading}
-${warning}${lines.join("\n")}`, sheetIds, source: "answer-sheets-fallback", coverageStatus: "incomplete", omissions: [{ source: "home-context-pack", reason: triedHome ? "unavailable-answer-sheet-fallback" : "not-configured" }] };
-}
-
-// src/lib/derive.ts
-import crypto2 from "node:crypto";
+// src/lib/erc8128.ts
+import crypto3 from "node:crypto";
 
 // node_modules/@noble/hashes/esm/cryptoNode.js
 import * as nc from "node:crypto";
@@ -2850,6 +2677,9 @@ var Keccak = class _Keccak extends Hash {
 var gen = (suffix, blockLen, outputLen) => createHasher(() => new Keccak(blockLen, suffix, outputLen));
 var keccak_256 = /* @__PURE__ */ (() => gen(1, 136, 256 / 8))();
 
+// src/lib/derive.ts
+import crypto2 from "node:crypto";
+
 // src/lib/fsutil.ts
 import fs3 from "node:fs";
 import path3 from "node:path";
@@ -3069,6 +2899,240 @@ async function getDeriveHeaders(config) {
     "X-Derive-Session-Id": session.sessionId,
     "X-Derive-Key": session.keyHex
   };
+}
+
+// src/lib/erc8128.ts
+var ERC8128_LABEL = "eth";
+var ERC8128_CHAIN_ID = 8453;
+var VALIDITY_SEC = 90;
+var CREATED_BACKDATE_SEC = 5;
+function buildSignatureBase(input) {
+  const params = `(@method @path @authority;created=${input.created};expires=${input.expires};nonce="${input.nonce}";keyid="${input.keyid}")`;
+  return `"@method": ${input.method.toUpperCase()}
+"@path": ${input.path}
+"@authority": ${input.authority}
+"@signature-params": ${params}`;
+}
+function signEip191(message, privateKey) {
+  const hex = privateKey.startsWith("0x") ? privateKey.slice(2) : privateKey;
+  const priv = Uint8Array.from(Buffer.from(hex, "hex"));
+  const prefix = new TextEncoder().encode(`Ethereum Signed Message:
+${message.length}`);
+  const prefixed = new Uint8Array(prefix.length + message.length);
+  prefixed.set(prefix, 0);
+  prefixed.set(message, prefix.length);
+  const digest = keccak_256(prefixed);
+  const sig = secp256k1.sign(digest, priv);
+  const out = new Uint8Array(65);
+  out.set(sig.toCompactRawBytes(), 0);
+  out[64] = sig.recovery + 27;
+  return out;
+}
+function signErc8128Request(input) {
+  const parsed = new URL(input.url);
+  const authority = parsed.host;
+  const path7 = parsed.pathname;
+  const created = input.createdSec ?? Math.floor(Date.now() / 1e3) - CREATED_BACKDATE_SEC;
+  const expires = created + VALIDITY_SEC;
+  const nonce = input.nonce ?? crypto3.randomBytes(16).toString("hex");
+  const chainId = input.chainId ?? ERC8128_CHAIN_ID;
+  const keyid = `erc8128:${chainId}:${addressFromPrivateKey(input.privateKey)}`;
+  const base = buildSignatureBase({ method: input.method, path: path7, authority, created, expires, nonce, keyid });
+  const sigBytes = signEip191(new TextEncoder().encode(base), input.privateKey);
+  const sigB64 = Buffer.from(sigBytes).toString("base64");
+  return {
+    "Signature-Input": `${ERC8128_LABEL}=(@method @path @authority;created=${created};expires=${expires};nonce="${nonce}";keyid="${keyid}")`,
+    Signature: `${ERC8128_LABEL}=:${sigB64}:`
+  };
+}
+
+// src/lib/kfdb-auth.ts
+function kfdbAuthFromConfig(config, deriveHeaders) {
+  return {
+    apiKey: config.api_key || void 0,
+    privateKey: config.private_key || void 0,
+    deriveHeaders
+  };
+}
+function kfdbAuthHeaders(auth, method, url) {
+  const headers2 = auth.deriveHeaders ? { ...auth.deriveHeaders } : {};
+  if (auth.apiKey) {
+    headers2.Authorization = `Bearer ${auth.apiKey}`;
+  } else if (auth.privateKey) {
+    Object.assign(headers2, signErc8128Request({ method, url, privateKey: auth.privateKey }));
+  }
+  return headers2;
+}
+
+// src/lib/context-pack.ts
+import { createHash } from "node:crypto";
+var DEFAULT_MAX_CHARS = 4e3;
+function homeCoverageStatus(pack) {
+  const status = pack.coverage?.status;
+  return status === "complete" || status === "bounded" || status === "incomplete" ? status : "incomplete";
+}
+function renderHomePack(pack) {
+  const status = homeCoverageStatus(pack);
+  const anchor = pack.anchor ?? {};
+  const anchorKey = anchor.surface ?? anchor.taskSlug ?? anchor.repoId ?? anchor.lesson ?? "unknown";
+  const lines = [
+    `## RickyData compiled context \u2014 ${anchor.kind ?? "unknown"}:${anchorKey}`,
+    `[CONTEXT COVERAGE \u2014 ${status.toUpperCase()}]`,
+    `Reproducibility hash: ${pack.reproducibility_hash ?? "unavailable"}; token estimate: ${pack.token_estimate ?? "unavailable"}`
+  ];
+  if (pack.brief?.trim()) lines.push("", pack.brief.trim());
+  const failed = (pack.coverage?.sources ?? []).filter((source) => source.status === "error");
+  if (!pack.coverage) lines.push("- SOURCE FAILED: context_pack_coverage \u2014 legacy pack omitted source-health metadata");
+  for (const source of failed) lines.push(`- SOURCE FAILED: ${source.source ?? "unknown"} \u2014 ${source.reason ?? "unknown error"}`);
+  const section = (title, values) => {
+    if (values.length > 0) lines.push("", `${title}:`, ...values.map((value) => `- ${value}`));
+  };
+  section("Invariants", (pack.invariants ?? []).map((row) => `${row.text ?? ""} [${row.source_ref ?? "source unavailable"}]`));
+  section("Verification gates", (pack.verification ?? []).map((row) => `${row.kind ?? "gate"}: ${row.status ?? "unknown"}${row.evidence_ref ? ` [${row.evidence_ref}]` : ""}`));
+  section("Work in progress", (pack.work_in_progress ?? []).map((row) => {
+    const refs = [row.issue_ref, row.issue_state, ...row.linked_prs ?? [], row.session_artifacts !== void 0 ? `${row.session_artifacts} session artifact(s)` : void 0].filter(Boolean);
+    return `${row.name ?? row.slug ?? "unnamed"} [${row.slug ?? "unknown"}]${refs.length ? ` \u2014 ${refs.join("; ")}` : ""}`;
+  }));
+  section("Knowledge (wiki)", (pack.wiki ?? []).flatMap((row) => [
+    `${row.title ?? row.slug ?? "untitled"}${row.status === "stale" ? " (STALE)" : ""}: ${row.summary ?? ""} [wiki:${row.slug ?? "unknown"}]`,
+    ...(row.key_claims ?? []).map((claim) => `  ${claim.text ?? ""} [${claim.source_ref ?? "source unavailable"}; ${claim.confidence_tier ?? "unknown"}]`)
+  ]));
+  section("Lessons", (pack.lessons ?? []).map((row) => `${(row.text ?? "").replace(/\n+/g, " ")} [${row.source_ref ?? "source unavailable"}; confidence ${row.confidence ?? "unknown"}]`));
+  section("Recent human decisions", (pack.decisions ?? []).map((row) => `${row.title ?? "untitled"} (${row.action ?? "unknown"}, ${row.decided_at ?? "date unavailable"}) [${row.source_ref_id ?? "source unavailable"}]`));
+  section("Known traps", (pack.traps ?? []).map((row) => `${row.name ?? "unnamed"}: ${row.hook ?? ""}`));
+  section("Open questions", (pack.open_questions ?? []).map((row) => `${row.question ?? ""} [${row.id ?? "id unavailable"}]`));
+  section("Selected context manifest", (pack.selected_items ?? []).map((row) => `${row.section ?? "unknown"}:${row.id ?? "unknown"} sha256=${row.content_hash ?? "unavailable"} tokens=${row.token_estimate ?? "unknown"}${row.rank_reason ? ` rank=${row.rank_reason}` : ""}`));
+  section("Context exclusions", [
+    ...(pack.omitted ?? []).map((row) => `${row.count ?? 0} ${row.section ?? "unknown"} item(s): ${row.reason ?? "unknown"}`),
+    ...(pack.omitted_items ?? []).map((row) => `${row.section ?? "unknown"}:${row.id ?? "unknown"}: ${row.reason ?? "unknown"}`)
+  ]);
+  return lines.join("\n");
+}
+async function fetchHomePack(input) {
+  if (!input.homeUrl || !input.homeToken || !input.repoId) return null;
+  const params = new URLSearchParams({
+    repo: input.repoId,
+    budget: String(input.homeBudget ?? 24e3),
+    consumer: "plugin"
+  });
+  if (input.taskSlug) params.set("task", input.taskSlug);
+  const controller = new AbortController();
+  const timeoutMs = Math.max(500, Math.min(input.timeoutMs ?? 8500, 7500));
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${input.homeUrl.replace(/\/$/, "")}/api/context-pack?${params}`, {
+      headers: { Accept: "application/json", Authorization: `Bearer ${input.homeToken}` },
+      signal: controller.signal
+    });
+    if (!res.ok) return null;
+    const pack = await res.json();
+    return pack.version === "context-pack/v1" ? pack : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function headers(auth, method, url) {
+  return { Accept: "application/json", ...kfdbAuthHeaders(auth, method, url) };
+}
+function sheetId(sheet) {
+  return sheet.sheet_id ?? sheet.id;
+}
+async function matchSheets(input) {
+  const text = input.query.trim();
+  if (!text) return [];
+  const base = input.apiUrl.replace(/\/$/, "");
+  const body = { error_text: text, limit: 5, min_confidence: 0, include_public: true };
+  if (input.context && Object.keys(input.context).length > 0) body.context = input.context;
+  const url = `${base}/api/v1/answer-sheets/match`;
+  const res = await postJson(url, body, headers(input.auth, "POST", url), input.timeoutMs ?? 5e3);
+  if (!res.ok || !res.json || typeof res.json !== "object") return [];
+  const matches = res.json.matches;
+  return Array.isArray(matches) ? matches : [];
+}
+async function listByCategory(input, category, limit) {
+  const base = input.apiUrl.replace(/\/$/, "");
+  const params = new URLSearchParams({ problem_category: category, min_confidence: "0", limit: String(limit) });
+  const url = `${base}/api/v1/answer-sheets?${params.toString()}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? 5e3);
+  try {
+    const res = await fetch(url, { method: "GET", headers: headers(input.auth, "GET", url), signal: controller.signal });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return Array.isArray(json.items) ? json.items : [];
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function formatLine(sheet) {
+  const title = (sheet.title || "").trim();
+  const summary = (sheet.solution_summary || "").trim();
+  if (!title && !summary) return null;
+  if (title && summary) return `- ${title}: ${summary}`;
+  return `- ${title || summary}`;
+}
+async function gatherContextPack(input) {
+  const triedHome = Boolean(input.homeUrl && input.homeToken && input.repoId);
+  const homePack = await fetchHomePack(input);
+  if (homePack) {
+    const shaRef = (value) => {
+      if (!value) return void 0;
+      const normalized = value.startsWith("sha256:") ? value : `sha256:${value}`;
+      return /^sha256:[0-9a-f]{64}$/.test(normalized) ? normalized : void 0;
+    };
+    const selectedManifestHash = shaRef(homePack.selected_manifest_hash) ?? `sha256:${createHash("sha256").update(JSON.stringify(homePack.selected_items ?? [])).digest("hex")}`;
+    return {
+      text: renderHomePack(homePack),
+      sheetIds: [],
+      source: "home",
+      coverageStatus: homeCoverageStatus(homePack),
+      ...homePack.reproducibility_hash ? { reproducibilityHash: homePack.reproducibility_hash } : {},
+      ...homePack.context_pack_id ? { packId: homePack.context_pack_id } : {},
+      ...shaRef(homePack.policy_hash) ? { policyHash: shaRef(homePack.policy_hash) } : {},
+      selectedManifestHash,
+      ...homePack.corpus_watermark ? { corpusWatermark: homePack.corpus_watermark } : {},
+      omissions: [
+        ...(homePack.omitted ?? []).map((row) => ({ source: row.section ?? "unknown", reason: row.reason ?? "unknown", ...row.count !== void 0 ? { count: row.count } : {} })),
+        ...(homePack.omitted_items ?? []).map((row) => ({ source: `${row.section ?? "unknown"}:${row.id ?? "unknown"}`, reason: row.reason ?? "unknown", count: 1 })),
+        ...(homePack.coverage?.sources ?? []).filter((row) => row.status !== "ok").map((row) => ({ source: row.source ?? "unknown", reason: row.reason ?? row.status ?? "unknown", ...row.count !== void 0 ? { count: row.count } : {} }))
+      ]
+    };
+  }
+  const maxChars = input.maxChars ?? DEFAULT_MAX_CHARS;
+  const fallbackInput = triedHome ? { ...input, timeoutMs: Math.min(input.timeoutMs ?? 5e3, 700) } : input;
+  const [matches, prefs, decisions] = await Promise.all([
+    matchSheets(fallbackInput).catch(() => []),
+    listByCategory(fallbackInput, "user_preference", 8).catch(() => []),
+    listByCategory(fallbackInput, "project_decision", 5).catch(() => [])
+  ]);
+  const seen = /* @__PURE__ */ new Set();
+  const sheetIds = [];
+  const lines = [];
+  let used = 0;
+  const heading = input.heading ?? "Remembered context (KFDB)";
+  for (const sheet of [...prefs, ...decisions, ...matches]) {
+    const id = sheetId(sheet);
+    if (id) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+    }
+    const line = formatLine(sheet);
+    if (!line) continue;
+    if (used + line.length + 1 > maxChars) break;
+    lines.push(line);
+    used += line.length + 1;
+    if (id) sheetIds.push(id);
+  }
+  if (lines.length === 0) {
+    return triedHome ? { text: "## RickyData context\n[CONTEXT COVERAGE \u2014 INCOMPLETE]\n- Home compiled context pack unavailable; no answer-sheet fallback matched.", sheetIds: [], source: "empty", coverageStatus: "incomplete", omissions: [{ source: "home-context-pack", reason: "unavailable" }] } : { text: "", sheetIds: [], source: "empty", coverageStatus: "incomplete", omissions: [{ source: "context-pack", reason: "not-configured" }] };
+  }
+  const warning = triedHome ? "[CONTEXT COVERAGE \u2014 INCOMPLETE]\n- Home compiled context pack unavailable; answer-sheet fallback only.\n" : "";
+  return { text: `## ${heading}
+${warning}${lines.join("\n")}`, sheetIds, source: "answer-sheets-fallback", coverageStatus: "incomplete", omissions: [{ source: "home-context-pack", reason: triedHome ? "unavailable-answer-sheet-fallback" : "not-configured" }] };
 }
 
 // src/lib/home-auth.ts
@@ -3439,8 +3503,7 @@ async function main() {
   }
   const pack = await gatherContextPack({
     apiUrl: config.api_url,
-    apiKey: config.api_key ?? "",
-    deriveHeaders,
+    auth: kfdbAuthFromConfig(config, deriveHeaders),
     query,
     context: language ? { language } : {},
     timeoutMs: 8500,

@@ -1,7 +1,7 @@
 import type { ClaudeCodeHookTrace } from 'rickydata/kfdb';
 import { buildClaudeCodeHookTraceWriteBundle, buildSessionLinkOperations, claudeCodeSessionNodeId, type ImmutableContentArtifactWrite } from 'rickydata/kfdb';
 import { postJson } from './http.js';
-import type { DeriveHeaders } from './derive.js';
+import { kfdbAuthHeaders, type KfdbAuth } from './kfdb-auth.js';
 
 const BATCH_SIZE = 900;
 
@@ -56,22 +56,21 @@ export function buildGraphWriteBundle(walletAddress: string, traces: ClaudeCodeH
 }
 
 /**
- * POST graph ops to {apiUrl}/api/v1/write in batches of <=900, with Bearer auth
- * plus S2D headers and skip_embedding. Throws on the first failed batch so the
- * caller can queue the remaining payload.
+ * POST graph ops to {apiUrl}/api/v1/write in batches of <=900, with KFDB auth
+ * (Bearer or ERC-8128) plus S2D headers and skip_embedding. Throws on the first
+ * failed batch so the caller can queue the remaining payload.
  */
 export async function writeGraph(
   apiUrl: string,
-  apiKey: string,
-  deriveHeaders: DeriveHeaders,
+  auth: KfdbAuth,
   operations: GraphOp[],
   timeoutMs = GRAPH_WRITE_TIMEOUT_MS,
 ): Promise<number> {
   const base = apiUrl.replace(/\/$/, '');
-  const headers = { Authorization: `Bearer ${apiKey}`, ...deriveHeaders };
+  const url = `${base}/api/v1/write`;
   for (let offset = 0; offset < operations.length; offset += BATCH_SIZE) {
     const batch = operations.slice(offset, offset + BATCH_SIZE);
-    const result = await postJson(`${base}/api/v1/write`, { operations: batch, skip_embedding: true }, headers, timeoutMs);
+    const result = await postJson(url, { operations: batch, skip_embedding: true }, kfdbAuthHeaders(auth, 'POST', url), timeoutMs);
     if (!result.ok) {
       throw new Error(`write graph failed: ${result.status} ${result.text.slice(0, 500)}`);
     }

@@ -2,6 +2,7 @@ import { loadConfig, resolveSink } from './lib/config.js';
 import { setLogLevel, log } from './lib/log.js';
 import { getDeriveHeaders, type DeriveHeaders } from './lib/derive.js';
 import { drainQueue, queueSize } from './lib/queue.js';
+import { kfdbAuthFromConfig } from './lib/kfdb-auth.js';
 import { wantsHelp } from './lib/cli-help.js';
 
 const USAGE = `usage: node drain-queue.mjs [--batch=<n>] [--budget-min=<n>] [--auto]
@@ -45,16 +46,15 @@ async function main(): Promise<void> {
     return;
   }
 
-  const apiKey = config.api_key ?? '';
   let deriveHeaders: DeriveHeaders;
   try {
-    deriveHeaders = await getDeriveHeaders({ apiUrl: config.api_url, apiKey, privateKey: config.private_key });
+    deriveHeaders = await getDeriveHeaders({ apiUrl: config.api_url, apiKey: config.api_key, privateKey: config.private_key });
   } catch (err) {
     log('warn', 'drain: derive failed; leaving queue intact', { error: (err as Error).message });
     return;
   }
 
-  const result = await drainQueue({ apiKey, deriveHeaders }, limit, { maxMs: budgetMin * 60_000 });
+  const result = await drainQueue(kfdbAuthFromConfig(config, deriveHeaders), limit, { maxMs: budgetMin * 60_000 });
   log('info', 'drain complete', result as unknown as Record<string, unknown>);
   if (!args.includes('--auto')) {
     process.stdout.write(`${JSON.stringify(result)}\n`);

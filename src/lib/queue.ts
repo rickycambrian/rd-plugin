@@ -6,6 +6,7 @@ import { postJson } from './http.js';
 import { GRAPH_WRITE_TIMEOUT_MS } from './graph.js';
 import { log } from './log.js';
 import type { DeriveHeaders } from './derive.js';
+import { signErc8128Request } from './erc8128.js';
 
 /** A queued write is a fully-formed request the drain can replay verbatim. */
 export interface QueuedRequest {
@@ -108,6 +109,8 @@ export function enqueue(
 
 export interface DrainAuth {
   apiKey?: string;
+  /** ERC-8128 signing key — satisfies `requiresBearer` entries when no apiKey. */
+  privateKey?: string;
   deriveHeaders?: DeriveHeaders;
 }
 
@@ -290,10 +293,17 @@ export async function drainQueue(auth: DrainAuth, limit = 500, options: DrainOpt
         result.deferred += 1;
         continue;
       }
+      // `requiresBearer` means "requires a KFDB credential": an api_key Bearer
+      // header, or (key-less mode) a fresh ERC-8128 signature over this exact
+      // method+url — signed per entry, since nonces are single-use.
       const headers: Record<string, string> = {};
-      if (entry.requiresBearer && auth.apiKey) headers.Authorization = `Bearer ${auth.apiKey}`;
+      if (entry.requiresBearer && auth.apiKey) {
+        headers.Authorization = `Bearer ${auth.apiKey}`;
+      } else if (entry.requiresBearer && auth.privateKey) {
+        Object.assign(headers, signErc8128Request({ method: entry.method ?? 'POST', url: entry.url, privateKey: auth.privateKey }));
+      }
       if (entry.requiresDerive && auth.deriveHeaders) Object.assign(headers, auth.deriveHeaders);
-      if ((entry.requiresBearer && !auth.apiKey) || (entry.requiresDerive && !auth.deriveHeaders)) {
+      if ((entry.requiresBearer && !auth.apiKey && !auth.privateKey) || (entry.requiresDerive && !auth.deriveHeaders)) {
         // Can't authenticate right now — leave for a later drain.
         result.failed += 1;
         continue;

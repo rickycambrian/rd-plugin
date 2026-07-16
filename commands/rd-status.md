@@ -10,9 +10,9 @@ Report the current state of rd-plugin as a compact dashboard. Read `~/.rickydata
 
 2. **Sink** — report the resolved sink and why: env `RICKYDATA_KG_SINK` > config `sink` > auto (`direct` when `private_key` present, else `off`). This is the single most important line — it tells the user whether anything is being captured at all.
 
-3. **Encryption mode** — if a `private_key` is configured, call `GET {api_url}/api/v1/auth/encryption-status` with `X-KF-API-Key: {api_key}` and, when `~/.rickydata/derive-session.json` holds a valid (non-error) session, also `X-Derive-Session-Id` and `X-Derive-Key`. Map the response:
-   - `mode: "sign_to_derive"` and `user_key_present: true` → `api_key+s2d` (show the wallet address).
-   - `mode: "plaintext"` or `"server_hkdf"` and no local `private_key` → `api_key`.
+3. **Auth + encryption mode** — report which KFDB credential is in use: `bearer` (api_key present) or `erc8128` (private_key only — every request is wallet-signed; no API key needed). If a `private_key` is configured, call `GET {api_url}/api/v1/auth/encryption-status` — with `X-KF-API-Key: {api_key}` when an api_key exists (otherwise the request is ERC-8128-signed by the flush pipeline; from a shell without a signer, skip this probe and report mode from config alone) — and, when `~/.rickydata/derive-session.json` holds a valid (non-error) session, also `X-Derive-Session-Id` and `X-Derive-Key`. Map the response:
+   - `mode: "sign_to_derive"` and `user_key_present: true` → `bearer+s2d` or `erc8128+s2d` (show the wallet address).
+   - `mode: "plaintext"` or `"server_hkdf"` and no local `private_key` → `bearer`.
    - `private_key` configured locally but `mode != "sign_to_derive"` → `s2d_failed (re-run /rd-setup)`; if a sentinel is present in `~/.rickydata/derive-session.json`, show its error.
    - Request itself 401s → connection row fails, encryption row shows `unknown (auth failed)`.
    - If `tee_trust_state` is not `trusted` or `release_posture` is stricter than `permissive`/`audit`, add a one-line warning.
@@ -61,7 +61,7 @@ Connection
   Sink: direct  (auto: private_key present)
 
 Encryption
-  Mode:   api_key+s2d
+  Mode:   bearer+s2d
   Wallet: 0xb3e6...a113
   Session expires: 2026-07-13T10:00:00Z
 
@@ -84,4 +84,4 @@ Config: ~/.rickydata/config.json
 Logs:   ~/.rickydata/logs/rd-plugin.log
 ```
 
-If anything is wrong, list a specific next action (usually: re-run `/rd-setup`, check the sink resolution, or `node ${CLAUDE_PLUGIN_ROOT}/dist/setup-codex.mjs` for unwired Codex). For nonzero dead-letter: inspect the entry's `url`/`body`/`lastError` and replay it with the stored method + Bearer + `X-Derive-Session-Id`/`X-Derive-Key` headers from `~/.rickydata/derive-session.json`; delete the file only after a 2xx. For persistent unflushed quiet logs: run `node ${CLAUDE_PLUGIN_ROOT}/dist/flush.mjs <sessionId>` (or `codex-flush.mjs`) directly and check `~/.rickydata/logs/rd-plugin.log` for the failure.
+If anything is wrong, list a specific next action (usually: re-run `/rd-setup`, check the sink resolution, or `node ${CLAUDE_PLUGIN_ROOT}/dist/setup-codex.mjs` for unwired Codex). For nonzero dead-letter: inspect the entry's `url`/`body`/`lastError` and replay it with the stored method, your KFDB credential (Bearer `api_key`, or freshly-signed ERC-8128 headers when only a `private_key` is configured — easiest via `node ${CLAUDE_PLUGIN_ROOT}/dist/drain-queue.mjs`, which signs per entry), and the `X-Derive-Session-Id`/`X-Derive-Key` headers from `~/.rickydata/derive-session.json`; delete the file only after a 2xx. For persistent unflushed quiet logs: run `node ${CLAUDE_PLUGIN_ROOT}/dist/flush.mjs <sessionId>` (or `codex-flush.mjs`) directly and check `~/.rickydata/logs/rd-plugin.log` for the failure.

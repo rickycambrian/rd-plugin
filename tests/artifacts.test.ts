@@ -20,7 +20,7 @@ describe('immutable content artifact writer', () => {
     });
     globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ acquired: true }), { status: 200 })) as typeof fetch;
 
-    const result = await writeContentArtifacts(config, 'api-key', { 'X-Wallet-Address': '0xabc', 'X-Derive-Session-Id': 's', 'X-Derive-Key': 'k' }, [built.artifact, built.artifact]);
+    const result = await writeContentArtifacts(config, { apiKey: 'api-key', deriveHeaders: { 'X-Wallet-Address': '0xabc', 'X-Derive-Session-Id': 's', 'X-Derive-Key': 'k' } }, [built.artifact, built.artifact]);
 
     expect(result).toEqual({ attempted: 1, persisted: 1, queued: 0, ok: true });
     const call = vi.mocked(globalThis.fetch).mock.calls[0];

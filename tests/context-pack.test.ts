@@ -40,7 +40,7 @@ describe('gatherContextPack', () => {
     }) as typeof fetch;
 
     const pack = await gatherContextPack({
-      apiUrl: 'https://kfdb.example', apiKey: '', query: 'rickydata_home typescript session start',
+      apiUrl: 'https://kfdb.example', auth: {}, query: 'rickydata_home typescript session start',
       homeUrl: 'https://home.example', homeToken: 'scwt_test', repoId: 'rickydata_home',
       homeBudget: 4000,
     });
@@ -73,7 +73,7 @@ describe('gatherContextPack', () => {
       });
     }) as typeof fetch;
     const pack = await gatherContextPack({
-      apiUrl: 'https://kfdb.example', apiKey: '', query: 'implement the exact oracle',
+      apiUrl: 'https://kfdb.example', auth: {}, query: 'implement the exact oracle',
       homeUrl: 'https://home.example', homeToken: 'scwt_test', repoId: 'rd-plugin',
       taskSlug: 'work-contract-1', homeBudget: 20000,
     });
@@ -94,7 +94,7 @@ describe('gatherContextPack', () => {
     }) as typeof fetch;
 
     const pack = await gatherContextPack({
-      apiUrl: 'https://kfdb.example', apiKey: '', query: 'repo session start',
+      apiUrl: 'https://kfdb.example', auth: {}, query: 'repo session start',
       homeUrl: 'https://home.example', homeToken: 'scwt_test', repoId: 'repo',
     });
 
@@ -125,7 +125,7 @@ describe('gatherContextPack', () => {
     }) as typeof fetch;
 
     const pending = gatherContextPack({
-      apiUrl: 'https://kfdb.example', apiKey: '', query: 'rd-plugin session start',
+      apiUrl: 'https://kfdb.example', auth: {}, query: 'rd-plugin session start',
       homeUrl: 'https://home.example', homeToken: 'scwt_test', repoId: 'rd-plugin', timeoutMs: 8_500,
     });
     await vi.advanceTimersByTimeAsync(5_000);

@@ -3104,6 +3104,71 @@ async function getDeriveHeaders(config) {
   };
 }
 
+// src/lib/erc8128.ts
+import crypto5 from "node:crypto";
+init_sha3();
+var ERC8128_LABEL = "eth";
+var ERC8128_CHAIN_ID = 8453;
+var VALIDITY_SEC = 90;
+var CREATED_BACKDATE_SEC = 5;
+function buildSignatureBase(input) {
+  const params = `(@method @path @authority;created=${input.created};expires=${input.expires};nonce="${input.nonce}";keyid="${input.keyid}")`;
+  return `"@method": ${input.method.toUpperCase()}
+"@path": ${input.path}
+"@authority": ${input.authority}
+"@signature-params": ${params}`;
+}
+function signEip191(message, privateKey) {
+  const hex = privateKey.startsWith("0x") ? privateKey.slice(2) : privateKey;
+  const priv = Uint8Array.from(Buffer.from(hex, "hex"));
+  const prefix = new TextEncoder().encode(`Ethereum Signed Message:
+${message.length}`);
+  const prefixed = new Uint8Array(prefix.length + message.length);
+  prefixed.set(prefix, 0);
+  prefixed.set(message, prefix.length);
+  const digest = keccak_256(prefixed);
+  const sig = secp256k1.sign(digest, priv);
+  const out = new Uint8Array(65);
+  out.set(sig.toCompactRawBytes(), 0);
+  out[64] = sig.recovery + 27;
+  return out;
+}
+function signErc8128Request(input) {
+  const parsed = new URL(input.url);
+  const authority = parsed.host;
+  const path9 = parsed.pathname;
+  const created = input.createdSec ?? Math.floor(Date.now() / 1e3) - CREATED_BACKDATE_SEC;
+  const expires = created + VALIDITY_SEC;
+  const nonce = input.nonce ?? crypto5.randomBytes(16).toString("hex");
+  const chainId = input.chainId ?? ERC8128_CHAIN_ID;
+  const keyid = `erc8128:${chainId}:${addressFromPrivateKey(input.privateKey)}`;
+  const base = buildSignatureBase({ method: input.method, path: path9, authority, created, expires, nonce, keyid });
+  const sigBytes = signEip191(new TextEncoder().encode(base), input.privateKey);
+  const sigB64 = Buffer.from(sigBytes).toString("base64");
+  return {
+    "Signature-Input": `${ERC8128_LABEL}=(@method @path @authority;created=${created};expires=${expires};nonce="${nonce}";keyid="${keyid}")`,
+    Signature: `${ERC8128_LABEL}=:${sigB64}:`
+  };
+}
+
+// src/lib/kfdb-auth.ts
+function kfdbAuthFromConfig(config, deriveHeaders) {
+  return {
+    apiKey: config.api_key || void 0,
+    privateKey: config.private_key || void 0,
+    deriveHeaders
+  };
+}
+function kfdbAuthHeaders(auth, method, url) {
+  const headers = auth.deriveHeaders ? { ...auth.deriveHeaders } : {};
+  if (auth.apiKey) {
+    headers.Authorization = `Bearer ${auth.apiKey}`;
+  } else if (auth.privateKey) {
+    Object.assign(headers, signErc8128Request({ method, url, privateKey: auth.privateKey }));
+  }
+  return headers;
+}
+
 // src/lib/work-provenance.ts
 function record(value3) {
   return value3 && typeof value3 === "object" && !Array.isArray(value3) ? value3 : {};
@@ -4214,7 +4279,7 @@ function enqueue(request, dirs = {}) {
 }
 
 // src/lib/artifacts.ts
-async function writeContentArtifacts(config, apiKey, deriveHeaders, artifacts) {
+async function writeContentArtifacts(config, auth, artifacts) {
   const unique = [...new Map(artifacts.map((artifact) => [artifact.key, artifact])).values()];
   const url = `${config.api_url.replace(/\/$/, "")}/api/v1/kv`;
   const result = { attempted: unique.length, persisted: 0, queued: 0, ok: true };
@@ -4228,14 +4293,14 @@ async function writeContentArtifacts(config, apiKey, deriveHeaders, artifacts) {
       requiresDerive: true,
       dedupeKey: `content-artifact:${artifact.key}`
     };
-    if (!deriveHeaders) {
+    if (!auth.deriveHeaders) {
       enqueue(queuedRequest);
       result.queued += 1;
       result.ok = false;
       continue;
     }
     try {
-      const response = await putJson(url, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, 6e4);
+      const response = await putJson(url, body, kfdbAuthHeaders(auth, "PUT", url), 6e4);
       if (response.ok || response.status === 409) {
         result.persisted += 1;
       } else {
@@ -4414,7 +4479,7 @@ function successfulToolEvent(event) {
 }
 async function post(cfg, pathName, body, queueOnFailure) {
   const url = `${cfg.apiUrl.replace(/\/$/, "")}/api/v1/plugin/${pathName}`;
-  const headers = { Authorization: `Bearer ${cfg.apiKey}`, ...cfg.deriveHeaders };
+  const headers = kfdbAuthHeaders(cfg.auth, "POST", url);
   try {
     const result = await postJson(url, body, headers, 15e3);
     if (result.ok) return true;
@@ -4565,12 +4630,13 @@ async function writeLegacyStream(cfg, claudeSessionId, events, startAfterSequenc
 
 // src/lib/writer.ts
 async function writeDirectUnit(input) {
-  const { config, walletAddress, apiKey, deriveHeaders, claudeSessionId, events, summary, transcriptPath } = input;
+  const { config, walletAddress, auth, claudeSessionId, events, summary, transcriptPath } = input;
+  const deriveHeaders = auth.deriveHeaders;
   const traces = buildTraces({ walletAddress, claudeSessionId, events, summary });
   const bundle = buildGraphWriteBundle(walletAddress, traces);
   const operations = bundle.operations;
   const writeUrl = `${config.api_url.replace(/\/$/, "")}/api/v1/write`;
-  const artifactResult = await writeContentArtifacts(config, apiKey, deriveHeaders, bundle.contentArtifacts);
+  const artifactResult = await writeContentArtifacts(config, auth, bundle.contentArtifacts);
   let graphOk = true;
   const batches = batchOperations(operations);
   for (let i = 0; i < batches.length; i++) {
@@ -4582,7 +4648,7 @@ async function writeDirectUnit(input) {
       continue;
     }
     try {
-      const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, GRAPH_WRITE_TIMEOUT_MS);
+      const result = await postJson(writeUrl, body, kfdbAuthHeaders(auth, "POST", writeUrl), GRAPH_WRITE_TIMEOUT_MS);
       if (!result.ok) {
         enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true, dedupeKey });
         graphOk = false;
@@ -4603,7 +4669,7 @@ async function writeDirectUnit(input) {
   if (deriveHeaders) {
     try {
       const result = await writeLegacyStream(
-        { apiUrl: config.api_url, apiKey, deriveHeaders, trackMessages: config.track_messages, trackFiles: config.track_files, trackGit: config.track_git },
+        { apiUrl: config.api_url, auth, trackMessages: config.track_messages, trackFiles: config.track_files, trackGit: config.track_git },
         claudeSessionId,
         events,
         input.legacyStreamMaxSequence,
@@ -4724,16 +4790,16 @@ async function main() {
   }
   let deriveHeaders;
   let walletAddress = (process.env.RD_WALLET_ADDRESS || "").toLowerCase();
-  const apiKey = config.api_key ?? "";
   if (sink === "direct" && config.private_key) {
     walletAddress = addressFromPrivateKey(config.private_key).toLowerCase();
     try {
-      deriveHeaders = await getDeriveHeaders({ apiUrl: config.api_url, apiKey, privateKey: config.private_key });
+      deriveHeaders = await getDeriveHeaders({ apiUrl: config.api_url, apiKey: config.api_key, privateKey: config.private_key });
     } catch (err) {
       process.stdout.write(`backfill: derive failed (${err.message}); graph ops will be queued
 `);
     }
   }
+  const auth = kfdbAuthFromConfig(config, deriveHeaders);
   const state = readState();
   state.backfilled = state.backfilled ?? {};
   const candidates = selectBackfillCandidates(collectSessionFiles(), { since, limit, done: state.backfilled });
@@ -4755,8 +4821,7 @@ async function main() {
         await writeDirectUnit({
           config,
           walletAddress,
-          apiKey,
-          deriveHeaders,
+          auth,
           claudeSessionId,
           events,
           summary,

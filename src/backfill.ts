@@ -6,6 +6,7 @@ import { setLogLevel, log } from './lib/log.js';
 import { readState, updateStateLocked } from './lib/state.js';
 import { parseTranscriptSummary, transcriptToEvents } from './lib/transcript.js';
 import { getDeriveHeaders, addressFromPrivateKey, type DeriveHeaders } from './lib/derive.js';
+import { kfdbAuthFromConfig } from './lib/kfdb-auth.js';
 import { writeDirectUnit, writeGatewayUnit } from './lib/writer.js';
 import { selectBackfillCandidates, type DiscoveredSession } from './lib/backfill-core.js';
 import { wantsHelp } from './lib/cli-help.js';
@@ -109,15 +110,15 @@ async function main(): Promise<void> {
 
   let deriveHeaders: DeriveHeaders | undefined;
   let walletAddress = (process.env.RD_WALLET_ADDRESS || '').toLowerCase();
-  const apiKey = config.api_key ?? '';
   if (sink === 'direct' && config.private_key) {
     walletAddress = addressFromPrivateKey(config.private_key).toLowerCase();
     try {
-      deriveHeaders = await getDeriveHeaders({ apiUrl: config.api_url, apiKey, privateKey: config.private_key });
+      deriveHeaders = await getDeriveHeaders({ apiUrl: config.api_url, apiKey: config.api_key, privateKey: config.private_key });
     } catch (err) {
       process.stdout.write(`backfill: derive failed (${(err as Error).message}); graph ops will be queued\n`);
     }
   }
+  const auth = kfdbAuthFromConfig(config, deriveHeaders);
 
   const state = readState();
   state.backfilled = state.backfilled ?? {};
@@ -143,8 +144,7 @@ async function main(): Promise<void> {
         await writeDirectUnit({
           config,
           walletAddress,
-          apiKey,
-          deriveHeaders,
+          auth,
           claudeSessionId,
           events,
           summary,

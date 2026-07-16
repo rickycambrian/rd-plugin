@@ -30,8 +30,10 @@ Under the hood, `/rd-setup` is a thin wrapper around the `setup.mjs` entrypoint,
 node ~/.claude/plugins/rd-plugin/dist/setup.mjs
 
 # arg form — persists keys, creating ~/.rickydata/config.json if needed
-node ~/.claude/plugins/rd-plugin/dist/setup.mjs private_key=0x... api_key=... --force
+node ~/.claude/plugins/rd-plugin/dist/setup.mjs private_key=0x... --force
 ```
+
+A wallet `private_key` alone is a complete setup: every KFDB request is signed per-request with the wallet (ERC-8128 HTTP message signatures), and KFDB auto-provisions a tenant for a new wallet on first request — no operator-issued API key is needed. An `api_key` is optional; when present it is used as legacy Bearer transport auth (`api_key=...` in the arg form).
 
 `node dist/setup.mjs` with no `key=value` arguments is always status-only (never writes). The arg form persists the given keys — an existing key is never silently overwritten; pass `--force` to allow it. When the arg form persists a new `private_key`, `setup.mjs` automatically performs one sign-to-derive round-trip against the configured KFDB before declaring success: on failure it removes the just-persisted `private_key` and prints why, rather than leaving a broken key in place. Pass `--skip-verify` to skip this check for offline/air-gapped setups. `/rd-setup`'s interactive flow performs this same S2D enrollment check as part of its walkthrough (see `commands/rd-setup.md`).
 
@@ -43,8 +45,8 @@ node ~/.claude/plugins/rd-plugin/dist/setup.mjs private_key=0x... api_key=... --
 |---|---|---|---|
 | `api_url` | string | `http://34.60.37.158` | KFDB base URL. Override per-run with `RICKYDATA_API_URL`. |
 | `home_url` | string | `https://rickydata-home-2dbp4scmrq-uc.a.run.app` | rickydata_home base URL used for the authenticated SessionStart context pack. Override per-run with `RICKYDATA_HOME_URL`. |
-| `api_key` | string | — | Bearer token for KFDB. |
-| `private_key` | string (64 hex) | — | Wallet key used for sign-to-derive. Your wallet address is derived from it; it is never sent anywhere. |
+| `api_key` | string | — | Optional Bearer token for KFDB (legacy). When absent, requests are ERC-8128 wallet-signed instead. |
+| `private_key` | string (64 hex) | — | Wallet key used for sign-to-derive encryption and (when no `api_key`) ERC-8128 request signing. Your wallet address is derived from it; the key itself is never sent anywhere. |
 | `track_messages` | bool | `true` | Capture prompts/turns. |
 | `track_files` | bool | `true` | Capture file edits. |
 | `track_git` | bool | `true` | Capture git operations. |
@@ -54,13 +56,12 @@ node ~/.claude/plugins/rd-plugin/dist/setup.mjs private_key=0x... api_key=... --
 | `excluded_directories` | string[] | `[]` | Working directories to skip entirely. |
 | `codex_repo_owners` | string[] | unset (= all owners) | Codex-only owner allowlist — see [Codex sessions](#codex-sessions) below. |
 
-A minimal local config looks like this (placeholders — use your own values):
+A minimal local config looks like this (placeholders — use your own values; `api_key` is optional and only needed for legacy Bearer auth):
 
 ```json
 {
   "api_url": "http://34.60.37.158",
   "home_url": "https://rickydata-home-2dbp4scmrq-uc.a.run.app",
-  "api_key": "<YOUR_KFDB_API_KEY>",
   "private_key": "<YOUR_64_HEX_WALLET_KEY>",
   "track_messages": true,
   "track_files": true,
@@ -107,7 +108,7 @@ Resolution order: env `RICKYDATA_KG_SINK` > config `sink` > auto.
 /rd-status
 ```
 
-You should see the API connected, encryption mode `api_key+s2d` (if you enrolled a wallet), and which tracking features are on. If the encryption row shows an S2D failure, re-run `/rd-setup` — a bad `private_key` is removed automatically rather than left in place.
+You should see the API connected, the auth + encryption mode (`erc8128+s2d` for a wallet-only setup, `bearer+s2d` when an `api_key` is also configured), and which tracking features are on. If the encryption row shows an S2D failure, re-run `/rd-setup` — a bad `private_key` is removed automatically rather than left in place.
 
 ## 6. Backfill (optional)
 

@@ -224,6 +224,25 @@ describe('drainQueue', () => {
     expect(postJsonMock).not.toHaveBeenCalled();
   });
 
+  it('replays requiresBearer entries with ERC-8128 signatures when only a private key is available', async () => {
+    enqueue({ url: 'http://x/api/v1/write', method: 'PUT', body: { operations: [1] }, requiresBearer: true, requiresDerive: true }, dirs());
+    postJsonMock.mockResolvedValueOnce(ok());
+    const result = await drainQueue(
+      { privateKey: `0x${'0'.repeat(63)}1`, deriveHeaders: AUTH.deriveHeaders },
+      500,
+      dirs(),
+    );
+    expect(result.sent).toBe(1);
+    expect(queuedFiles()).toHaveLength(0);
+    const headers = postJsonMock.mock.calls[0][2] as Record<string, string>;
+    expect(headers.Authorization).toBeUndefined();
+    // Signed over the entry's own method+url so the server's binding check passes.
+    expect(headers['Signature-Input']).toContain('keyid="erc8128:');
+    expect(headers.Signature).toMatch(/^eth=:/);
+    expect(headers['X-Derive-Key']).toBe('key');
+    expect(postJsonMock.mock.calls[0][4]).toBe('PUT');
+  });
+
   it('skips the drain when a fresh lock is held', async () => {
     enqueue({ url: 'http://x/w', body: { operations: [1] }, requiresBearer: true, requiresDerive: true }, dirs());
     fs.writeFileSync(path.join(dir, '.drain.lock'), JSON.stringify({ pid: 1 }));

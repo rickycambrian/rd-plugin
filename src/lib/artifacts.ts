@@ -1,6 +1,6 @@
 import type { ImmutableContentArtifactWrite } from 'rickydata/kfdb';
 import type { RdConfig } from './config.js';
-import type { DeriveHeaders } from './derive.js';
+import { kfdbAuthHeaders, type KfdbAuth } from './kfdb-auth.js';
 import { putJson } from './http.js';
 import { enqueue } from './queue.js';
 import { log } from './log.js';
@@ -15,8 +15,7 @@ export interface ArtifactWriteResult {
 /** Persist exact content before graph references; failures are durably queued. */
 export async function writeContentArtifacts(
   config: RdConfig,
-  apiKey: string,
-  deriveHeaders: DeriveHeaders | undefined,
+  auth: KfdbAuth,
   artifacts: ImmutableContentArtifactWrite[],
 ): Promise<ArtifactWriteResult> {
   const unique = [...new Map(artifacts.map((artifact) => [artifact.key, artifact])).values()];
@@ -32,14 +31,15 @@ export async function writeContentArtifacts(
       requiresDerive: true,
       dedupeKey: `content-artifact:${artifact.key}`,
     };
-    if (!deriveHeaders) {
+    if (!auth.deriveHeaders) {
       enqueue(queuedRequest);
       result.queued += 1;
       result.ok = false;
       continue;
     }
     try {
-      const response = await putJson(url, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, 60_000);
+      // Headers signed per request: ERC-8128 nonces are single-use.
+      const response = await putJson(url, body, kfdbAuthHeaders(auth, 'PUT', url), 60_000);
       if (response.ok || response.status === 409) {
         result.persisted += 1;
       } else {

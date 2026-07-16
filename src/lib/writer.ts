@@ -1,7 +1,7 @@
 import type { RdConfig } from './config.js';
 import type { PendingEvent } from './event.js';
 import type { TranscriptSummary } from './transcript.js';
-import type { DeriveHeaders } from './derive.js';
+import { kfdbAuthHeaders, type KfdbAuth } from './kfdb-auth.js';
 import { buildTraces } from './trace.js';
 import { buildGraphWriteBundle, batchOperations, GRAPH_WRITE_TIMEOUT_MS } from './graph.js';
 import { writeContentArtifacts } from './artifacts.js';
@@ -14,8 +14,7 @@ import { log } from './log.js';
 export interface DirectUnitInput {
   config: RdConfig;
   walletAddress: string;
-  apiKey: string;
-  deriveHeaders?: DeriveHeaders;
+  auth: KfdbAuth;
   claudeSessionId: string;
   events: PendingEvent[];
   summary?: TranscriptSummary;
@@ -47,13 +46,14 @@ export interface DirectUnitResult {
  * derive headers, graph ops are queued for a later drain and legacy is skipped.
  */
 export async function writeDirectUnit(input: DirectUnitInput): Promise<DirectUnitResult> {
-  const { config, walletAddress, apiKey, deriveHeaders, claudeSessionId, events, summary, transcriptPath } = input;
+  const { config, walletAddress, auth, claudeSessionId, events, summary, transcriptPath } = input;
+  const deriveHeaders = auth.deriveHeaders;
   const traces = buildTraces({ walletAddress, claudeSessionId, events, summary });
   const bundle = buildGraphWriteBundle(walletAddress, traces);
   const operations = bundle.operations;
   const writeUrl = `${config.api_url.replace(/\/$/, '')}/api/v1/write`;
 
-  const artifactResult = await writeContentArtifacts(config, apiKey, deriveHeaders, bundle.contentArtifacts);
+  const artifactResult = await writeContentArtifacts(config, auth, bundle.contentArtifacts);
 
   let graphOk = true;
   const batches = batchOperations(operations);
@@ -69,7 +69,7 @@ export async function writeDirectUnit(input: DirectUnitInput): Promise<DirectUni
       continue;
     }
     try {
-      const result = await postJson(writeUrl, body, { Authorization: `Bearer ${apiKey}`, ...deriveHeaders }, GRAPH_WRITE_TIMEOUT_MS);
+      const result = await postJson(writeUrl, body, kfdbAuthHeaders(auth, 'POST', writeUrl), GRAPH_WRITE_TIMEOUT_MS);
       if (!result.ok) {
         enqueue({ url: writeUrl, body, requiresBearer: true, requiresDerive: true, dedupeKey });
         graphOk = false;
@@ -93,7 +93,7 @@ export async function writeDirectUnit(input: DirectUnitInput): Promise<DirectUni
   if (deriveHeaders) {
     try {
       const result = await writeLegacyStream(
-        { apiUrl: config.api_url, apiKey, deriveHeaders, trackMessages: config.track_messages, trackFiles: config.track_files, trackGit: config.track_git },
+        { apiUrl: config.api_url, auth, trackMessages: config.track_messages, trackFiles: config.track_files, trackGit: config.track_git },
         claudeSessionId,
         events,
         input.legacyStreamMaxSequence,

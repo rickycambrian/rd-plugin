@@ -4,11 +4,13 @@ import type { PendingEvent } from '../src/lib/event.js';
 
 const CFG: LegacyStreamConfig = {
   apiUrl: 'http://kfdb.test',
-  apiKey: 'test-key',
-  deriveHeaders: {
-    'X-Wallet-Address': '0xb3e6fa9620933ba9a6037f4ff890ec5fad0ba113',
-    'X-Derive-Session-Id': 'sess',
-    'X-Derive-Key': 'key',
+  auth: {
+    apiKey: 'test-key',
+    deriveHeaders: {
+      'X-Wallet-Address': '0xb3e6fa9620933ba9a6037f4ff890ec5fad0ba113',
+      'X-Derive-Session-Id': 'sess',
+      'X-Derive-Key': 'key',
+    },
   },
   trackMessages: true,
   trackFiles: true,

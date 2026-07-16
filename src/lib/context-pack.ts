@@ -1,5 +1,5 @@
 import { postJson } from './http.js';
-import type { DeriveHeaders } from './derive.js';
+import { kfdbAuthHeaders, type KfdbAuth } from './kfdb-auth.js';
 import { createHash } from 'node:crypto';
 
 /**
@@ -22,8 +22,7 @@ interface Sheet {
 
 export interface ContextPackInput {
   apiUrl: string;
-  apiKey: string;
-  deriveHeaders?: DeriveHeaders;
+  auth: KfdbAuth;
   query: string;
   context?: Record<string, unknown>;
   heading?: string;
@@ -150,11 +149,8 @@ async function fetchHomePack(input: ContextPackInput): Promise<HomeContextPack |
   }
 }
 
-function headers(apiKey: string, derive?: DeriveHeaders): Record<string, string> {
-  const h: Record<string, string> = { Accept: 'application/json' };
-  if (apiKey) h.Authorization = `Bearer ${apiKey}`;
-  if (derive) Object.assign(h, derive);
-  return h;
+function headers(auth: KfdbAuth, method: string, url: string): Record<string, string> {
+  return { Accept: 'application/json', ...kfdbAuthHeaders(auth, method, url) };
 }
 
 function sheetId(sheet: Sheet): string | undefined {
@@ -167,7 +163,8 @@ async function matchSheets(input: ContextPackInput): Promise<Sheet[]> {
   const base = input.apiUrl.replace(/\/$/, '');
   const body: Record<string, unknown> = { error_text: text, limit: 5, min_confidence: 0, include_public: true };
   if (input.context && Object.keys(input.context).length > 0) body.context = input.context;
-  const res = await postJson(`${base}/api/v1/answer-sheets/match`, body, headers(input.apiKey, input.deriveHeaders), input.timeoutMs ?? 5000);
+  const url = `${base}/api/v1/answer-sheets/match`;
+  const res = await postJson(url, body, headers(input.auth, 'POST', url), input.timeoutMs ?? 5000);
   if (!res.ok || !res.json || typeof res.json !== 'object') return [];
   const matches = (res.json as { matches?: unknown }).matches;
   return Array.isArray(matches) ? (matches as Sheet[]) : [];
@@ -180,7 +177,7 @@ async function listByCategory(input: ContextPackInput, category: string, limit: 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? 5000);
   try {
-    const res = await fetch(url, { method: 'GET', headers: headers(input.apiKey, input.deriveHeaders), signal: controller.signal });
+    const res = await fetch(url, { method: 'GET', headers: headers(input.auth, 'GET', url), signal: controller.signal });
     if (!res.ok) return [];
     const json = (await res.json()) as { items?: unknown };
     return Array.isArray(json.items) ? (json.items as Sheet[]) : [];

@@ -4,6 +4,7 @@ import { readState, flushedEntry, setFlushedEntry, commitFlushedEntry } from '..
 import { sha256Hex } from '../lib/fsutil.js';
 import { getDeriveHeaders, addressFromPrivateKey, type DeriveHeaders } from '../lib/derive.js';
 import { drainQueue } from '../lib/queue.js';
+import { kfdbAuthFromConfig } from '../lib/kfdb-auth.js';
 import { acquireFlushLock, acquireFlushLockOrWait, releaseFlushLock } from '../lib/flush-lock.js';
 import { readCodexPending, clearCodexPending } from './pending.js';
 import { CODEX_PENDING_DIR } from './paths.js';
@@ -103,19 +104,19 @@ async function flushCodexDirect(
     log('warn', 'codex direct sink but no private_key', { sessionId: codexSessionId });
     return;
   }
-  const apiKey = config.api_key ?? '';
   const walletAddress = addressFromPrivateKey(config.private_key).toLowerCase();
 
   let deriveHeaders: DeriveHeaders | undefined;
   try {
-    deriveHeaders = await getDeriveHeaders({ apiUrl: config.api_url, apiKey, privateKey: config.private_key });
+    deriveHeaders = await getDeriveHeaders({ apiUrl: config.api_url, apiKey: config.api_key, privateKey: config.private_key });
   } catch (err) {
     log('warn', 'codex derive failed; queueing graph only', { sessionId: codexSessionId, error: (err as Error).message });
   }
+  const auth = kfdbAuthFromConfig(config, deriveHeaders);
 
   if (deriveHeaders) {
     try {
-      const drained = await drainQueue({ apiKey, deriveHeaders });
+      const drained = await drainQueue(auth);
       if (drained.sent > 0 || drained.remaining > 0) log('info', 'queue drained', drained as unknown as Record<string, unknown>);
     } catch { /* best-effort */ }
   }
@@ -124,8 +125,7 @@ async function flushCodexDirect(
     config,
     walletAddress,
     agentId: RD_CODEX_AGENT_ID,
-    apiKey,
-    deriveHeaders,
+    auth,
     codexSessionId,
     events,
   });

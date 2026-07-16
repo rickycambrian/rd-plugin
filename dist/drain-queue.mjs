@@ -3174,6 +3174,62 @@ var AKC_PRIVATE_LABELS = [
   "RickydataCanvasGateReport"
 ];
 
+// src/lib/erc8128.ts
+import crypto4 from "node:crypto";
+init_sha3();
+var ERC8128_LABEL2 = "eth";
+var ERC8128_CHAIN_ID2 = 8453;
+var VALIDITY_SEC = 90;
+var CREATED_BACKDATE_SEC = 5;
+function buildSignatureBase(input) {
+  const params = `(@method @path @authority;created=${input.created};expires=${input.expires};nonce="${input.nonce}";keyid="${input.keyid}")`;
+  return `"@method": ${input.method.toUpperCase()}
+"@path": ${input.path}
+"@authority": ${input.authority}
+"@signature-params": ${params}`;
+}
+function signEip191(message, privateKey) {
+  const hex = privateKey.startsWith("0x") ? privateKey.slice(2) : privateKey;
+  const priv = Uint8Array.from(Buffer.from(hex, "hex"));
+  const prefix = new TextEncoder().encode(`Ethereum Signed Message:
+${message.length}`);
+  const prefixed = new Uint8Array(prefix.length + message.length);
+  prefixed.set(prefix, 0);
+  prefixed.set(message, prefix.length);
+  const digest = keccak_256(prefixed);
+  const sig = secp256k1.sign(digest, priv);
+  const out = new Uint8Array(65);
+  out.set(sig.toCompactRawBytes(), 0);
+  out[64] = sig.recovery + 27;
+  return out;
+}
+function signErc8128Request2(input) {
+  const parsed = new URL(input.url);
+  const authority = parsed.host;
+  const path5 = parsed.pathname;
+  const created = input.createdSec ?? Math.floor(Date.now() / 1e3) - CREATED_BACKDATE_SEC;
+  const expires = created + VALIDITY_SEC;
+  const nonce = input.nonce ?? crypto4.randomBytes(16).toString("hex");
+  const chainId = input.chainId ?? ERC8128_CHAIN_ID2;
+  const keyid = `erc8128:${chainId}:${addressFromPrivateKey(input.privateKey)}`;
+  const base = buildSignatureBase({ method: input.method, path: path5, authority, created, expires, nonce, keyid });
+  const sigBytes = signEip191(new TextEncoder().encode(base), input.privateKey);
+  const sigB64 = Buffer.from(sigBytes).toString("base64");
+  return {
+    "Signature-Input": `${ERC8128_LABEL2}=(@method @path @authority;created=${created};expires=${expires};nonce="${nonce}";keyid="${keyid}")`,
+    Signature: `${ERC8128_LABEL2}=:${sigB64}:`
+  };
+}
+
+// src/lib/kfdb-auth.ts
+function kfdbAuthFromConfig(config, deriveHeaders) {
+  return {
+    apiKey: config.api_key || void 0,
+    privateKey: config.private_key || void 0,
+    deriveHeaders
+  };
+}
+
 // src/lib/graph.ts
 var GRAPH_WRITE_TIMEOUT_MS = 6e4;
 
@@ -3331,9 +3387,13 @@ async function drainQueue(auth, limit = 500, options = {}) {
         continue;
       }
       const headers = {};
-      if (entry.requiresBearer && auth.apiKey) headers.Authorization = `Bearer ${auth.apiKey}`;
+      if (entry.requiresBearer && auth.apiKey) {
+        headers.Authorization = `Bearer ${auth.apiKey}`;
+      } else if (entry.requiresBearer && auth.privateKey) {
+        Object.assign(headers, signErc8128Request2({ method: entry.method ?? "POST", url: entry.url, privateKey: auth.privateKey }));
+      }
       if (entry.requiresDerive && auth.deriveHeaders) Object.assign(headers, auth.deriveHeaders);
-      if (entry.requiresBearer && !auth.apiKey || entry.requiresDerive && !auth.deriveHeaders) {
+      if (entry.requiresBearer && !auth.apiKey && !auth.privateKey || entry.requiresDerive && !auth.deriveHeaders) {
         result.failed += 1;
         continue;
       }
@@ -3428,15 +3488,14 @@ async function main() {
     log("info", "drain: nothing to do (non-direct sink or no key)", { pending, sink });
     return;
   }
-  const apiKey = config.api_key ?? "";
   let deriveHeaders;
   try {
-    deriveHeaders = await getDeriveHeaders({ apiUrl: config.api_url, apiKey, privateKey: config.private_key });
+    deriveHeaders = await getDeriveHeaders({ apiUrl: config.api_url, apiKey: config.api_key, privateKey: config.private_key });
   } catch (err) {
     log("warn", "drain: derive failed; leaving queue intact", { error: err.message });
     return;
   }
-  const result = await drainQueue({ apiKey, deriveHeaders }, limit, { maxMs: budgetMin * 6e4 });
+  const result = await drainQueue(kfdbAuthFromConfig(config, deriveHeaders), limit, { maxMs: budgetMin * 6e4 });
   log("info", "drain complete", result);
   if (!args.includes("--auto")) {
     process.stdout.write(`${JSON.stringify(result)}
