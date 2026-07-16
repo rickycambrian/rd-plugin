@@ -29,6 +29,13 @@ export interface WorkProvenanceEnvelope {
     /** Hooks do not expose usage. Unknown must remain null, never synthetic zero. */
     usage: null;
   };
+  gitArm?: {
+    status: 'started' | 'rejected';
+    binary: string;
+    diagnosticCode?: 'RICKYGIT_PROVENANCE_PREFLIGHT_REJECTED';
+    missingFlags?: string[];
+    detail?: string;
+  };
   /** Hooks do not expose usage. The execution engine may enrich this later. */
   usage: null;
 }

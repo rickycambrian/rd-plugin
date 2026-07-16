@@ -363,7 +363,7 @@ async function ownedRepository(cwd, owners) {
 }
 
 // src/lib/rickygit-arm.ts
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs4 from "node:fs";
 import os2 from "node:os";
 import path3 from "node:path";
@@ -373,6 +373,7 @@ function str3(value) {
 function exactText2(value) {
   return typeof value === "string" && value.trim() ? value : void 0;
 }
+var RICKYGIT_PREFLIGHT_DIAGNOSTIC = "RICKYGIT_PROVENANCE_PREFLIGHT_REJECTED";
 function rickygitArmRequest(input, env = process.env) {
   if (input.hook_event_name !== "UserPromptSubmit") return null;
   const objective = exactText2(input.prompt);
@@ -406,21 +407,69 @@ function resolveRickygitSessionStartScript(env = process.env) {
   ].filter((candidate) => Boolean(candidate));
   return candidates.find((candidate) => fs4.existsSync(candidate));
 }
+function configuredBinary(env) {
+  return str3(env.RICKYGIT_BIN) ?? "rickygit";
+}
+function preflightRickygitArm(request, env = process.env) {
+  const binary = configuredBinary(env);
+  const requiredFlags = ["--source-intent-ref"];
+  if (request.env.RICKYDATA_DECISION_PACK_ID || request.env.RICKYDATA_DECISION_PACK_HASH) {
+    requiredFlags.push("--decision-pack-id", "--decision-pack-hash");
+  }
+  const help = spawnSync(binary, ["work", "start", "--help"], {
+    encoding: "utf8",
+    env,
+    timeout: 1e3,
+    windowsHide: true
+  });
+  if (help.error || help.status !== 0) {
+    return {
+      status: "rejected",
+      binary,
+      diagnosticCode: RICKYGIT_PREFLIGHT_DIAGNOSTIC,
+      missingFlags: requiredFlags,
+      detail: help.error?.message ?? `capability probe exited ${help.status ?? "without status"}`
+    };
+  }
+  const output = `${help.stdout ?? ""}
+${help.stderr ?? ""}`;
+  const missingFlags = requiredFlags.filter((flag) => !output.includes(flag));
+  return missingFlags.length > 0 ? {
+    status: "rejected",
+    binary,
+    diagnosticCode: RICKYGIT_PREFLIGHT_DIAGNOSTIC,
+    missingFlags,
+    detail: `configured rickygit cannot carry required provenance flags: ${missingFlags.join(", ")}`
+  } : { status: "ok", binary };
+}
 function spawnRickygitArm(input, env = process.env) {
   const request = rickygitArmRequest(input, env);
   const script = resolveRickygitSessionStartScript(env);
-  if (!request || !script) return false;
+  if (!request || !script) return { status: "not_applicable" };
+  const preflight = preflightRickygitArm(request, env);
+  if (preflight.status === "rejected") return preflight;
   try {
-    const child = spawn("bash", [script], {
+    const child = spawn("bash", [
+      "-c",
+      'printf %s "$1" | bash "$2"',
+      "rickydata-git-arm",
+      JSON.stringify(request.event),
+      script
+    ], {
       detached: true,
-      stdio: ["pipe", "ignore", "ignore"],
+      stdio: "ignore",
       env: { ...env, ...request.env }
     });
-    child.stdin.end(JSON.stringify(request.event));
     child.unref();
-    return true;
-  } catch {
-    return false;
+    return { status: "started", binary: preflight.binary };
+  } catch (error) {
+    return {
+      status: "rejected",
+      binary: preflight.binary,
+      diagnosticCode: RICKYGIT_PREFLIGHT_DIAGNOSTIC,
+      missingFlags: [],
+      detail: error instanceof Error ? error.message : "detached adapter spawn failed"
+    };
   }
 }
 
@@ -464,8 +513,22 @@ async function main() {
     dirtyStateHash: repo.dirtyStateHash
   } : void 0;
   const event = toPendingEvent(input, sequence, repository);
+  const gitArm = spawnRickygitArm(input);
+  if (gitArm.status === "started" && event.workProvenance) {
+    event.workProvenance.gitArm = { status: "started", binary: gitArm.binary };
+  } else if (gitArm.status === "rejected") {
+    if (event.workProvenance) {
+      event.workProvenance.gitArm = {
+        status: "rejected",
+        binary: gitArm.binary,
+        diagnosticCode: gitArm.diagnosticCode,
+        missingFlags: gitArm.missingFlags,
+        detail: gitArm.detail
+      };
+    }
+    log("error", "rickygit provenance preflight rejected", gitArm);
+  }
   appendPending(sessionId, event);
-  spawnRickygitArm(input);
   if (spawnFlush) {
     spawnDetachedFlush(sessionId, final);
   }
@@ -491,4 +554,6 @@ main().catch((err) => {
     log("error", "capture failed", { error: err.message });
   } catch {
   }
-}).finally(() => process.exit(0));
+}).finally(() => {
+  process.exitCode = 0;
+});

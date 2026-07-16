@@ -60,11 +60,22 @@ async function main(): Promise<void> {
     dirtyStateHash: repo.dirtyStateHash,
   } : undefined;
   const event = toPendingEvent(input, sequence, repository);
-  appendPending(sessionId, event);
   // UserPromptSubmit is the first lifecycle point where the exact objective is
   // observable. Arm rickydata_git asynchronously; its session-keyed adapter is
   // idempotent and reuses Home-launched attempts instead of minting duplicates.
-  spawnRickygitArm(input);
+  const gitArm = spawnRickygitArm(input);
+  if (gitArm.status === 'started' && event.workProvenance) {
+    event.workProvenance.gitArm = { status: 'started', binary: gitArm.binary };
+  } else if (gitArm.status === 'rejected') {
+    if (event.workProvenance) {
+      event.workProvenance.gitArm = {
+        status: 'rejected', binary: gitArm.binary, diagnosticCode: gitArm.diagnosticCode,
+        missingFlags: gitArm.missingFlags, detail: gitArm.detail,
+      };
+    }
+    log('error', 'rickygit provenance preflight rejected', gitArm);
+  }
+  appendPending(sessionId, event);
 
   if (spawnFlush) {
     spawnDetachedFlush(sessionId, final);
@@ -93,4 +104,8 @@ main()
   .catch((err) => {
     try { log('error', 'capture failed', { error: (err as Error).message }); } catch { /* ignore */ }
   })
-  .finally(() => process.exit(0));
+  .finally(() => {
+    // Natural exit lets libuv finish launching detached provenance adapters.
+    // A forced process.exit can discard a just-scheduled spawn before exec.
+    process.exitCode = 0;
+  });
