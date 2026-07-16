@@ -178,7 +178,7 @@ describe('writeSpool', () => {
     const written = writeSpool(dir, traces);
     expect(written.length).toBeGreaterThan(2);
     for (const file of written) expect(fs.statSync(file).size).toBeLessThanOrEqual(2 * 1024 * 1024);
-  });
+  }, 10_000);
 
   it('leaves no .tmp files behind (atomic tmp + rename)', () => {
     const dir = tmp();

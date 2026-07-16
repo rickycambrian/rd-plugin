@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { buildCodexHookTraceOperations } from 'rickydata/kfdb';
 import { CONFIG_FILE } from '../src/lib/paths.js';
 import { buildCodexTraces, groupTurns } from '../src/codex/trace.js';
@@ -180,7 +181,12 @@ describe('codex config', () => {
   });
 
   it('resolves any GitHub repo when the owner gate is off (owners=null) and still gates on a configured list', async () => {
-    const cwd = process.cwd(); // this repo: github.com/rickycambrian/rd-plugin
+    const cwd = tmp();
+    execFileSync('git', ['init', '-b', 'main'], { cwd });
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/rickycambrian/rd-plugin.git'], { cwd });
+    fs.writeFileSync(path.join(cwd, 'README.md'), 'fixture\n');
+    execFileSync('git', ['add', 'README.md'], { cwd });
+    execFileSync('git', ['-c', 'user.name=rd-plugin-test', '-c', 'user.email=test@example.com', 'commit', '-m', 'fixture'], { cwd });
     const gateOff = await ownedRepository(cwd, null);
     expect(gateOff?.owner).toBe('rickycambrian');
     expect(gateOff?.repository).toBe('rd-plugin');

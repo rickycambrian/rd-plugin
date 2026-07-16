@@ -3273,6 +3273,7 @@ var GraphEntityKind;
   GraphEntityKind2["RunUsageReceipt"] = "RunUsageReceipt";
   GraphEntityKind2["RunOutcomeReceipt"] = "RunOutcomeReceipt";
   GraphEntityKind2["ContentArtifact"] = "ContentArtifact";
+  GraphEntityKind2["SessionArtifactManifest"] = "SessionArtifactManifest";
   GraphEntityKind2["OpenQuestion"] = "OpenQuestion";
 })(GraphEntityKind || (GraphEntityKind = {}));
 var GraphEdgeType;
@@ -3315,6 +3316,7 @@ var GraphEdgeType;
   GraphEdgeType2["GeneratedBySession"] = "GENERATED_BY_SESSION";
   GraphEdgeType2["PacksSubject"] = "PACKS_SUBJECT";
   GraphEdgeType2["IncludesArtifact"] = "INCLUDES_ARTIFACT";
+  GraphEdgeType2["HasArtifactManifest"] = "HAS_ARTIFACT_MANIFEST";
   GraphEdgeType2["HasSourceReceipt"] = "HAS_SOURCE_RECEIPT";
   GraphEdgeType2["ScoresPack"] = "SCORES_PACK";
   GraphEdgeType2["DecidesWithPack"] = "DECIDES_WITH_PACK";
@@ -3377,6 +3379,7 @@ var ENTITY_ID_PARTS = {
   [GraphEntityKind.RunUsageReceipt]: ["run_node_id", "receipt_key"],
   [GraphEntityKind.RunOutcomeReceipt]: ["run_node_id", "receipt_key"],
   [GraphEntityKind.ContentArtifact]: ["content_hash", "media_type"],
+  [GraphEntityKind.SessionArtifactManifest]: ["session_node_id", "turn_node_id"],
   // memory-v1: same `(source_ref, question)` ⇒ same id ⇒ idempotent merge.
   [GraphEntityKind.OpenQuestion]: ["source_ref", "question"]
 };
@@ -3650,6 +3653,124 @@ function buildDecisionObservationOperations(input) {
   return { observationId, operations };
 }
 
+// node_modules/rickydata/dist/kfdb/session-artifact-manifest.js
+var SESSION_ARTIFACT_MANIFEST_CONTRACT_VERSION = "rickydata.session_artifact_manifest.v1";
+var SESSION_ARTIFACT_MANIFEST_MEDIA_TYPE = "application/vnd.rickydata.session-artifact-manifest+json; version=1";
+function nonEmpty(input, field) {
+  const value3 = input.trim();
+  if (!value3)
+    throw new Error(`${field} must not be empty`);
+  return value3;
+}
+function manifestDocument(input) {
+  const entries = input.entries.map((entry, insertionIndex) => ({ entry, insertionIndex })).sort((left, right) => left.entry.sequence - right.entry.sequence || left.insertionIndex - right.insertionIndex).map(({ entry }) => ({
+    sequence: entry.sequence,
+    eventType: nonEmpty(entry.eventType, "entry.eventType"),
+    receivedAt: entry.receivedAt,
+    role: nonEmpty(entry.role, "entry.role"),
+    ...entry.toolName ? { toolName: entry.toolName } : {},
+    ...entry.toolUseId ? { toolUseId: entry.toolUseId } : {},
+    artifact: entry.artifact
+  }));
+  return {
+    contractVersion: SESSION_ARTIFACT_MANIFEST_CONTRACT_VERSION,
+    engine: input.engine,
+    runtime: {
+      agentId: nonEmpty(input.runtime.agentId, "runtime.agentId"),
+      ...input.runtime.model ? { model: input.runtime.model } : {},
+      ...input.runtime.cwd ? { cwd: input.runtime.cwd } : {}
+    },
+    session: {
+      nodeId: nonEmpty(input.session.nodeId, "session.nodeId"),
+      label: nonEmpty(input.session.label, "session.label"),
+      externalSessionId: nonEmpty(input.session.externalSessionId, "session.externalSessionId")
+    },
+    turn: {
+      nodeId: nonEmpty(input.turn.nodeId, "turn.nodeId"),
+      label: nonEmpty(input.turn.label, "turn.label"),
+      ...input.turn.externalTurnId ? { externalTurnId: input.turn.externalTurnId } : {},
+      index: input.turn.index,
+      startedAt: input.turn.startedAt,
+      completedAt: input.turn.completedAt
+    },
+    ...input.repository ? { repository: input.repository } : {},
+    entries
+  };
+}
+function buildSessionArtifactManifestOperations(input) {
+  const manifest = manifestDocument(input);
+  const content = JSON.stringify(manifest);
+  const built = buildContentArtifactOperations({
+    content,
+    mediaType: SESSION_ARTIFACT_MANIFEST_MEDIA_TYPE,
+    observableKind: "session-artifact-manifest",
+    sourceRef: `session-artifact-manifest:${input.engine}:${manifest.session.externalSessionId}:${manifest.turn.index}`
+  });
+  const manifestId = deriveRickydataGraphId(GraphEntityKind.SessionArtifactManifest, [
+    manifest.session.nodeId,
+    manifest.turn.nodeId
+  ]);
+  const operations = [
+    ...built.operations,
+    {
+      operation: "create_node",
+      id: manifestId,
+      label: GraphEntityKind.SessionArtifactManifest,
+      mode: "merge",
+      properties: {
+        contract_version: rickydataGraphValue(SESSION_ARTIFACT_MANIFEST_CONTRACT_VERSION),
+        engine: rickydataGraphValue(manifest.engine),
+        agent_id: rickydataGraphValue(manifest.runtime.agentId),
+        model: rickydataGraphValue(manifest.runtime.model),
+        cwd: rickydataGraphValue(manifest.runtime.cwd),
+        session_node_id: rickydataGraphValue(manifest.session.nodeId),
+        session_label: rickydataGraphValue(manifest.session.label),
+        external_session_id: rickydataGraphValue(manifest.session.externalSessionId),
+        turn_node_id: rickydataGraphValue(manifest.turn.nodeId),
+        turn_label: rickydataGraphValue(manifest.turn.label),
+        external_turn_id: rickydataGraphValue(manifest.turn.externalTurnId),
+        turn_index: rickydataGraphValue(manifest.turn.index),
+        started_at: rickydataGraphValue(manifest.turn.startedAt),
+        completed_at: rickydataGraphValue(manifest.turn.completedAt),
+        entry_count: rickydataGraphValue(manifest.entries.length),
+        repository: rickydataGraphValue(manifest.repository),
+        manifest_artifact: rickydataGraphValue(built.ref),
+        manifest_content_hash: rickydataGraphValue(built.ref.contentHash)
+      }
+    },
+    {
+      operation: "create_edge",
+      id: deriveRickydataGraphEdgeId(manifest.turn.nodeId, GraphEdgeType.HasArtifactManifest, manifestId),
+      from: manifest.turn.nodeId,
+      to: manifestId,
+      edge_type: GraphEdgeType.HasArtifactManifest,
+      properties: {
+        contract_version: rickydataGraphValue(SESSION_ARTIFACT_MANIFEST_CONTRACT_VERSION),
+        turn_index: rickydataGraphValue(manifest.turn.index)
+      }
+    },
+    {
+      operation: "create_edge",
+      id: deriveRickydataGraphEdgeId(manifestId, GraphEdgeType.IncludesArtifact, built.ref.artifactId),
+      from: manifestId,
+      to: built.ref.artifactId,
+      edge_type: GraphEdgeType.IncludesArtifact,
+      properties: {
+        contract_version: rickydataGraphValue(SESSION_ARTIFACT_MANIFEST_CONTRACT_VERSION),
+        role: rickydataGraphValue("manifest-document"),
+        content_hash: rickydataGraphValue(built.ref.contentHash)
+      }
+    }
+  ];
+  return {
+    manifestId,
+    manifest,
+    manifestArtifact: built.ref,
+    operations,
+    contentArtifacts: built.artifacts
+  };
+}
+
 // node_modules/rickydata/dist/kfdb/claude-code-hook-trace.js
 var KG_NAMESPACE2 = uuidV53("rickydata-claude-code-hook-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
 var EXECUTION_KG_NAMESPACE2 = uuidV53("rickydata-execution-knowledge-graph-v1", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
@@ -3900,6 +4021,7 @@ function buildClaudeCodeHookTraceWriteBundle(trace) {
     { operation: "create_edge", id: deterministicExecutionId("USES_EXECUTION_ENGINE", [turnNodeId, executionEngineNodeId]), from: turnNodeId, to: executionEngineNodeId, edge_type: "USES_EXECUTION_ENGINE", properties: { execution_engine: value("claude-code") } }
   ];
   const contentArtifacts = [];
+  const manifestEntries = [];
   if (trace.initialPrompt !== void 0) {
     const initialPromptArtifact = buildContentArtifactOperations({
       content: trace.initialPrompt,
@@ -3908,6 +4030,13 @@ function buildClaudeCodeHookTraceWriteBundle(trace) {
       sourceRef: `claude-code:${trace.claudeSessionId}:initial-prompt`
     });
     contentArtifacts.push(...initialPromptArtifact.artifacts);
+    manifestEntries.push({
+      sequence: -1,
+      eventType: "SessionInitialPrompt",
+      receivedAt: trace.startedAt,
+      role: "initial-human-prompt",
+      artifact: initialPromptArtifact.ref
+    });
     operations.push(...initialPromptArtifact.operations, {
       operation: "create_edge",
       id: deterministicId("INCLUDES_ARTIFACT", [sessionNodeId, initialPromptArtifact.ref.artifactId]),
@@ -3928,6 +4057,9 @@ function buildClaudeCodeHookTraceWriteBundle(trace) {
     const observable = [];
     if (event.prompt !== void 0)
       observable.push({ role: "human-prompt", content: event.prompt, mediaType: "text/plain; charset=utf-8" });
+    if (event.lastAssistantMessage !== void 0 && event.lastAssistantMessage !== null) {
+      observable.push({ role: "assistant-message", content: event.lastAssistantMessage, mediaType: "text/plain; charset=utf-8" });
+    }
     if (event.toolInput !== void 0)
       observable.push({ role: "tool-input", content: stableJson(event.toolInput), mediaType: "application/json" });
     if (event.toolResponse !== void 0)
@@ -3956,6 +4088,15 @@ function buildClaudeCodeHookTraceWriteBundle(trace) {
       artifactRefs[item.role] = built.ref;
       contentArtifacts.push(...built.artifacts);
       operations.push(...built.operations);
+      manifestEntries.push({
+        sequence: event.sequence,
+        eventType: event.hookEventName,
+        receivedAt: event.receivedAt,
+        role: item.role,
+        ...event.toolName ? { toolName: event.toolName } : {},
+        ...event.toolUseId ? { toolUseId: event.toolUseId } : {},
+        artifact: built.ref
+      });
     }
     operations.push({ operation: "create_node", id: eventId, label: "ClaudeCodeHookEvent", mode: "merge", properties: { event_index: value(event.sequence), event_type: value(event.hookEventName), cwd: value(event.cwd ?? trace.cwd ?? ""), tool_name: value(event.toolName ?? ""), tool_use_id: value(event.toolUseId ?? ""), data: value(eventData(event, artifactRefs)), schema_version: value(TRACE_SCHEMA_VERSION) } }, { operation: "create_edge", id: deterministicId("EMITTED_CLAUDE_CODE_HOOK", [turnNodeId, eventId]), from: turnNodeId, to: eventId, edge_type: "EMITTED_CLAUDE_CODE_HOOK", properties: { event_index: value(event.sequence) } });
     for (const [role, artifact] of Object.entries(artifactRefs)) {
@@ -4017,6 +4158,22 @@ function buildClaudeCodeHookTraceWriteBundle(trace) {
       operations.push(...observation.operations);
     }
   });
+  const manifest = buildSessionArtifactManifestOperations({
+    engine: "claude-code",
+    runtime: { agentId: trace.agentId, ...trace.model ? { model: trace.model } : {}, ...trace.cwd ? { cwd: trace.cwd } : {} },
+    session: { nodeId: sessionNodeId, label: "ClaudeCodeSession", externalSessionId: trace.claudeSessionId },
+    turn: {
+      nodeId: turnNodeId,
+      label: "ClaudeCodeTurn",
+      index: trace.turnIndex,
+      startedAt: trace.startedAt,
+      completedAt: trace.completedAt
+    },
+    repository: trace.repository,
+    entries: manifestEntries
+  });
+  operations.push(...manifest.operations);
+  contentArtifacts.push(...manifest.contentArtifacts);
   return { operations, contentArtifacts };
 }
 

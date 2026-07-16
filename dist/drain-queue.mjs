@@ -2975,6 +2975,7 @@ var GraphEntityKind;
   GraphEntityKind2["RunUsageReceipt"] = "RunUsageReceipt";
   GraphEntityKind2["RunOutcomeReceipt"] = "RunOutcomeReceipt";
   GraphEntityKind2["ContentArtifact"] = "ContentArtifact";
+  GraphEntityKind2["SessionArtifactManifest"] = "SessionArtifactManifest";
   GraphEntityKind2["OpenQuestion"] = "OpenQuestion";
 })(GraphEntityKind || (GraphEntityKind = {}));
 var GraphEdgeType;
@@ -3017,6 +3018,7 @@ var GraphEdgeType;
   GraphEdgeType2["GeneratedBySession"] = "GENERATED_BY_SESSION";
   GraphEdgeType2["PacksSubject"] = "PACKS_SUBJECT";
   GraphEdgeType2["IncludesArtifact"] = "INCLUDES_ARTIFACT";
+  GraphEdgeType2["HasArtifactManifest"] = "HAS_ARTIFACT_MANIFEST";
   GraphEdgeType2["HasSourceReceipt"] = "HAS_SOURCE_RECEIPT";
   GraphEdgeType2["ScoresPack"] = "SCORES_PACK";
   GraphEdgeType2["DecidesWithPack"] = "DECIDES_WITH_PACK";
@@ -3079,6 +3081,7 @@ var ENTITY_ID_PARTS = {
   [GraphEntityKind.RunUsageReceipt]: ["run_node_id", "receipt_key"],
   [GraphEntityKind.RunOutcomeReceipt]: ["run_node_id", "receipt_key"],
   [GraphEntityKind.ContentArtifact]: ["content_hash", "media_type"],
+  [GraphEntityKind.SessionArtifactManifest]: ["session_node_id", "turn_node_id"],
   // memory-v1: same `(source_ref, question)` ⇒ same id ⇒ idempotent merge.
   [GraphEntityKind.OpenQuestion]: ["source_ref", "question"]
 };

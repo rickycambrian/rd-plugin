@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { transcriptToEvents, parseTranscriptSummary } from '../src/lib/transcript.js';
 import { buildTraces, groupTurns } from '../src/lib/trace.js';
-import { buildGraphOperations, batchOperations, GRAPH_WRITE_TIMEOUT_MS } from '../src/lib/graph.js';
+import { buildGraphOperations, buildGraphWriteBundle, batchOperations, GRAPH_WRITE_TIMEOUT_MS } from '../src/lib/graph.js';
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'transcript-sample.jsonl');
 const WALLET = '0xb3e6fa9620933ba9a6037f4ff890ec5fad0ba113';
@@ -83,6 +83,22 @@ describe('buildGraphOperations', () => {
       const props = (node.properties ?? {}) as Record<string, unknown>;
       expect(Object.prototype.hasOwnProperty.call(props, 'source')).toBe(false);
     }
+  });
+
+  it('indexes each turn manifest and preserves Claude Stop-hook assistant text', () => {
+    const traces = fixtureTraces();
+    const stop = traces[0]?.events.find((event) => event.hookEventName === 'Stop');
+    if (!stop) throw new Error('fixture has no Stop event');
+    stop.lastAssistantMessage = 'Done — corrected the typo in the SQL query.';
+
+    const bundle = buildGraphWriteBundle(WALLET, traces);
+    expect(bundle.operations.map((operation) => operation.label)).toContain('SessionArtifactManifest');
+    expect(bundle.operations.map((operation) => operation.edge_type)).toContain('HAS_ARTIFACT_MANIFEST');
+    const inlineContent = bundle.contentArtifacts.flatMap((artifact) =>
+      artifact.value.contractVersion === 'content-artifact/v1' ? [artifact.value.content] : [],
+    );
+    expect(inlineContent).toContain('Done — corrected the typo in the SQL query.');
+    expect(inlineContent.some((content) => content.includes('rickydata.session_artifact_manifest.v1'))).toBe(true);
   });
 });
 
