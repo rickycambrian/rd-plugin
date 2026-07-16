@@ -36,6 +36,31 @@ describe('buildTraces', () => {
       expect(trace.sessionId).toBe('sess-abc');
     }
   });
+
+  it('uses each turn start snapshot and carries start/end provenance through the SDK migration seam', () => {
+    const events = [
+      {
+        sequence: 0, hookEventName: 'UserPromptSubmit', claudeSessionId: 'sess-repos', receivedAt: 1,
+        prompt: 'first', repository: { owner: 'o', repository: 'r', fullName: 'o/r', remoteUrl: 'x', commitSha: 'a'.repeat(40) },
+        workProvenance: { schemaVersion: 'rickydata.work_provenance.v1', repository: { commitSha: 'a'.repeat(40) }, usage: null },
+      },
+      {
+        sequence: 1, hookEventName: 'Stop', claudeSessionId: 'sess-repos', receivedAt: 2,
+        repository: { owner: 'o', repository: 'r', fullName: 'o/r', remoteUrl: 'x', commitSha: 'b'.repeat(40) },
+        workProvenance: { schemaVersion: 'rickydata.work_provenance.v1', repository: { commitSha: 'b'.repeat(40) }, terminal: { event: 'Stop', resultCommitSha: 'b'.repeat(40), usage: null }, usage: null },
+      },
+      {
+        sequence: 2, hookEventName: 'UserPromptSubmit', claudeSessionId: 'sess-repos', receivedAt: 3,
+        prompt: 'second', repository: { owner: 'o', repository: 'r', fullName: 'o/r', remoteUrl: 'x', commitSha: 'c'.repeat(40) },
+        workProvenance: { schemaVersion: 'rickydata.work_provenance.v1', repository: { commitSha: 'c'.repeat(40) }, usage: null },
+      },
+    ] as any;
+    const traces = buildTraces({ walletAddress: WALLET, claudeSessionId: 'sess-repos', events });
+    expect(traces.map((trace) => trace.repository?.commitSha)).toEqual(['a'.repeat(40), 'c'.repeat(40)]);
+    expect(traces[0].baseRepository?.commitSha).toBe('a'.repeat(40));
+    expect(traces[0].resultRepository?.commitSha).toBe('b'.repeat(40));
+    expect((traces[0].events[1].hookPayload as any).rickydata_work_provenance.terminal.resultCommitSha).toBe('b'.repeat(40));
+  });
 });
 
 describe('buildGraphOperations', () => {

@@ -3080,6 +3080,11 @@ var GraphEntityKind;
   GraphEntityKind2["DecisionSourceReceipt"] = "DecisionSourceReceipt";
   GraphEntityKind2["ContextDeliveryReceipt"] = "ContextDeliveryReceipt";
   GraphEntityKind2["DecisionObservation"] = "DecisionObservation";
+  GraphEntityKind2["ObjectiveObservation"] = "ObjectiveObservation";
+  GraphEntityKind2["RepositoryStateReceipt"] = "RepositoryStateReceipt";
+  GraphEntityKind2["VerificationObservation"] = "VerificationObservation";
+  GraphEntityKind2["RunUsageReceipt"] = "RunUsageReceipt";
+  GraphEntityKind2["RunOutcomeReceipt"] = "RunOutcomeReceipt";
   GraphEntityKind2["ContentArtifact"] = "ContentArtifact";
   GraphEntityKind2["OpenQuestion"] = "OpenQuestion";
 })(GraphEntityKind || (GraphEntityKind = {}));
@@ -3130,6 +3135,12 @@ var GraphEdgeType;
   GraphEdgeType2["DeliversPack"] = "DELIVERS_PACK";
   GraphEdgeType2["ObservedInSession"] = "OBSERVED_IN_SESSION";
   GraphEdgeType2["ObservedAgainstPack"] = "OBSERVED_AGAINST_PACK";
+  GraphEdgeType2["GovernedByContract"] = "GOVERNED_BY_CONTRACT";
+  GraphEdgeType2["ObservedRepositoryState"] = "OBSERVED_REPOSITORY_STATE";
+  GraphEdgeType2["VerifiesContract"] = "VERIFIES_CONTRACT";
+  GraphEdgeType2["MeasuresRun"] = "MEASURES_RUN";
+  GraphEdgeType2["ReportsOutcome"] = "REPORTS_OUTCOME";
+  GraphEdgeType2["UsesUsageReceipt"] = "USES_USAGE_RECEIPT";
 })(GraphEdgeType || (GraphEdgeType = {}));
 var ENTITY_ID_PARTS = {
   [GraphEntityKind.Repository]: ["canonical_repo_ref"],
@@ -3173,6 +3184,11 @@ var ENTITY_ID_PARTS = {
   [GraphEntityKind.DecisionSourceReceipt]: ["decision_pack_id", "source", "receipt_key"],
   [GraphEntityKind.ContextDeliveryReceipt]: ["session_node_id", "delivery_key"],
   [GraphEntityKind.DecisionObservation]: ["session_node_id", "observation_key"],
+  [GraphEntityKind.ObjectiveObservation]: ["session_node_id", "observation_key"],
+  [GraphEntityKind.RepositoryStateReceipt]: ["session_node_id", "receipt_key"],
+  [GraphEntityKind.VerificationObservation]: ["work_contract_id", "verification_key"],
+  [GraphEntityKind.RunUsageReceipt]: ["run_node_id", "receipt_key"],
+  [GraphEntityKind.RunOutcomeReceipt]: ["run_node_id", "receipt_key"],
   [GraphEntityKind.ContentArtifact]: ["content_hash", "media_type"],
   // memory-v1: same `(source_ref, question)` ⇒ same id ⇒ idempotent merge.
   [GraphEntityKind.OpenQuestion]: ["source_ref", "question"]
@@ -3383,6 +3399,10 @@ function splitUtf8(content, maxBytes) {
 function buildContextDeliveryReceiptOperations(input) {
   if (input.packHash)
     assertHash(input.packHash, "packHash");
+  if (input.policyHash)
+    assertHash(input.policyHash, "policyHash");
+  if (input.selectedManifestHash)
+    assertHash(input.selectedManifestHash, "selectedManifestHash");
   const receiptId = deriveRickydataGraphId(GraphEntityKind.ContextDeliveryReceipt, [
     assertNonEmpty(input.session.nodeId, "session.nodeId"),
     assertNonEmpty(input.deliveryKey, "deliveryKey")
@@ -3399,7 +3419,10 @@ function buildContextDeliveryReceiptOperations(input) {
       interface: input.interface,
       coverage_status: input.coverageStatus,
       omissions: input.omissions,
-      delivered_at: input.deliveredAt
+      delivered_at: input.deliveredAt,
+      policy_hash: input.policyHash,
+      selected_manifest_hash: input.selectedManifestHash,
+      corpus_watermark: input.corpusWatermark
     }),
     edge(receiptId, GraphEdgeType.DeliveredToSession, input.session.nodeId, { session_label: input.session.label }),
     edge(receiptId, GraphEdgeType.IncludesArtifact, input.renderedArtifact.artifactId, { role: "rendered-context" })
@@ -3552,10 +3575,10 @@ function extractCommand(input) {
     return input;
   if (!input || typeof input !== "object")
     return null;
-  const record = input;
+  const record2 = input;
   for (const key of ["command", "cmd", "script"]) {
-    if (typeof record[key] === "string" && record[key])
-      return record[key];
+    if (typeof record2[key] === "string" && record2[key])
+      return record2[key];
   }
   return null;
 }
@@ -3665,7 +3688,10 @@ function eventData(event, contentArtifacts) {
     contextDelivery: event.contextDelivery === void 0 ? void 0 : {
       ...event.contextDelivery,
       renderedContent: summarizePayload(event.contextDelivery.renderedContent)
-    }
+    },
+    repository: event.repository,
+    workContract: event.workContract,
+    sourceIntentRef: event.sourceIntentRef
   };
 }
 function codexSessionNodeId(trace) {
@@ -3719,7 +3745,11 @@ function buildCodexHookTraceWriteBundle(trace) {
         source: value("codex-hooks"),
         schema_version: value(TRACE_SCHEMA_VERSION),
         updated_at: value(trace.completedAt),
-        repository: value(trace.repository)
+        repository: value(trace.repository),
+        base_repository: value(trace.baseRepository),
+        result_repository: value(trace.resultRepository),
+        work_contract: value(trace.workContract),
+        source_intent_ref: value(trace.sourceIntentRef)
       }
     },
     {
@@ -3741,7 +3771,11 @@ function buildCodexHookTraceWriteBundle(trace) {
         completed_at: value(trace.completedAt),
         event_count: value(trace.events.length),
         schema_version: value(TRACE_SCHEMA_VERSION),
-        repository: value(trace.repository)
+        repository: value(trace.repository),
+        base_repository: value(trace.baseRepository),
+        result_repository: value(trace.resultRepository),
+        work_contract: value(trace.workContract),
+        source_intent_ref: value(trace.sourceIntentRef)
       }
     },
     {
@@ -3889,7 +3923,10 @@ function buildCodexHookTraceWriteBundle(trace) {
         interface: event.contextDelivery.interface,
         coverageStatus: event.contextDelivery.coverageStatus,
         omissions: event.contextDelivery.omissions,
-        deliveredAt: event.contextDelivery.deliveredAt
+        deliveredAt: event.contextDelivery.deliveredAt,
+        policyHash: event.contextDelivery.policyHash,
+        selectedManifestHash: event.contextDelivery.selectedManifestHash,
+        corpusWatermark: event.contextDelivery.corpusWatermark
       });
       operations.push(...receipt.operations);
     }
@@ -4312,6 +4349,20 @@ function codexPendingFileFor(codexSessionId) {
   return path6.join(CODEX_PENDING_DIR, `${safeName(codexSessionId)}.jsonl`);
 }
 
+// src/lib/work-provenance.ts
+var WORK_PROVENANCE_SCHEMA_VERSION = "rickydata.work_provenance.v1";
+function record(value3) {
+  return value3 && typeof value3 === "object" && !Array.isArray(value3) ? value3 : {};
+}
+function sdkHookPayload(payload, provenance) {
+  if (!provenance) return payload;
+  return { ...record(payload), rickydata_work_provenance: provenance };
+}
+function normalizeWorkProvenance(value3) {
+  const item = record(value3);
+  return item.schemaVersion === WORK_PROVENANCE_SCHEMA_VERSION ? item : void 0;
+}
+
 // src/codex/event.ts
 function str(value3) {
   return typeof value3 === "string" ? value3 : void 0;
@@ -4345,6 +4396,13 @@ function normalizeCodexPendingEvent(raw, index) {
     repoRemoteUrl: str(e.repoRemoteUrl),
     repoBranch: str(e.repoBranch),
     repoCommitSha: str(e.repoCommitSha),
+    repoTreeHash: str(e.repoTreeHash),
+    repoDirty: typeof e.repoDirty === "boolean" ? e.repoDirty : void 0,
+    repoDirtyStateHash: str(e.repoDirtyStateHash),
+    workProvenance: normalizeWorkProvenance(e.workProvenance),
+    workContract: e.workContract && typeof e.workContract === "object" ? e.workContract : void 0,
+    sourceIntentRef: str(e.sourceIntentRef),
+    repository: e.repository && typeof e.repository === "object" ? e.repository : void 0,
     contextDelivery: e.contextDelivery && typeof e.contextDelivery === "object" ? e.contextDelivery : void 0
   };
 }
@@ -4364,13 +4422,26 @@ function toTraceEvent(e) {
     toolUseId: e.toolUseId,
     toolInput: e.toolInput,
     toolResponse: e.toolResponse,
-    hookPayload: e.hookPayload,
+    hookPayload: sdkHookPayload(e.hookPayload, e.workProvenance),
     decisionKind: e.decisionKind,
     decisionQuestion: e.decisionQuestion,
     decisionOptions: e.decisionOptions,
     decisionAnswer: e.decisionAnswer,
     decisionPolicyRef: e.decisionPolicyRef,
-    contextDelivery: e.contextDelivery
+    contextDelivery: e.contextDelivery,
+    repository: e.repoFullName ? {
+      owner: e.repoOwner ?? "",
+      repository: e.repoId ?? "",
+      fullName: e.repoFullName,
+      remoteUrl: e.repoRemoteUrl ?? "",
+      branch: e.repoBranch,
+      commitSha: e.repoCommitSha,
+      treeHash: e.repoTreeHash,
+      dirty: e.repoDirty,
+      dirtyStateHash: e.repoDirtyStateHash
+    } : void 0,
+    workContract: e.workContract,
+    sourceIntentRef: e.sourceIntentRef
   };
 }
 
@@ -4419,24 +4490,40 @@ function firstDefined(values) {
   for (const v of values) if (v !== void 0 && v !== null && v !== "") return v;
   return void 0;
 }
+function repositoryForEvent(event) {
+  if (event.repository) return event.repository;
+  if (!event.repoFullName) return void 0;
+  return {
+    owner: event.repoOwner ?? "",
+    repository: event.repoId ?? "",
+    fullName: event.repoFullName,
+    remoteUrl: event.repoRemoteUrl ?? "",
+    branch: event.repoBranch,
+    commitSha: event.repoCommitSha,
+    treeHash: event.repoTreeHash,
+    dirty: event.repoDirty,
+    dirtyStateHash: event.repoDirtyStateHash
+  };
+}
 function buildCodexTraces(input) {
   const { walletAddress, agentId, codexSessionId, events } = input;
   const groups = groupTurns(events);
   const sessionModel = firstDefined(events.map((e) => e.model));
   const sessionCwd = firstDefined(events.map((e) => e.cwd));
-  const repository = events.find((e) => e.repoFullName)?.repoFullName ? {
-    owner: events.find((e) => e.repoOwner)?.repoOwner ?? "",
-    repository: events.find((e) => e.repoId)?.repoId ?? "",
-    fullName: events.find((e) => e.repoFullName)?.repoFullName ?? "",
-    remoteUrl: events.find((e) => e.repoRemoteUrl)?.repoRemoteUrl ?? "",
-    branch: events.find((e) => e.repoBranch)?.repoBranch,
-    commitSha: events.find((e) => e.repoCommitSha)?.repoCommitSha
-  } : void 0;
   return groups.map((group, index) => {
     const turnIndex = index + 1;
     const turnId = group.turnId ?? `${codexSessionId}-turn-${turnIndex}`;
     const model = firstDefined([...group.events.map((e) => e.model), sessionModel]);
     const cwd = firstDefined([...group.events.map((e) => e.cwd), sessionCwd]);
+    const repoEvent = group.events.find((event) => event.repoFullName);
+    const repository = repoEvent?.repoFullName ? {
+      owner: repoEvent.repoOwner ?? "",
+      repository: repoEvent.repoId ?? "",
+      fullName: repoEvent.repoFullName,
+      remoteUrl: repoEvent.repoRemoteUrl ?? "",
+      branch: repoEvent.repoBranch,
+      commitSha: repoEvent.repoCommitSha
+    } : void 0;
     const trace = {
       walletAddress,
       agentId,
@@ -4451,6 +4538,14 @@ function buildCodexTraces(input) {
       events: group.events.map(toTraceEvent),
       repository
     };
+    const baseRepository = firstDefined(group.events.map(repositoryForEvent));
+    const resultRepository = firstDefined([...group.events].reverse().map(repositoryForEvent));
+    if (baseRepository) trace.baseRepository = baseRepository;
+    if (resultRepository) trace.resultRepository = resultRepository;
+    const workContract = group.events.find((event) => event.workContract)?.workContract;
+    const sourceIntentRef = firstDefined(group.events.map((event) => event.sourceIntentRef));
+    if (workContract) trace.workContract = workContract;
+    if (sourceIntentRef) trace.sourceIntentRef = sourceIntentRef;
     return trace;
   });
 }
@@ -4535,8 +4630,8 @@ function contentArtifactRecord(identity, artifact) {
 function graphBatchRecord(identity, graphOperations) {
   return { spoolVersion: 3, recordType: "graph_batch", ...identity, graphOperations };
 }
-function serializeBoundedSpoolRecord(record) {
-  const serialized = JSON.stringify(record);
+function serializeBoundedSpoolRecord(record2) {
+  const serialized = JSON.stringify(record2);
   const bytes = Buffer.byteLength(serialized, "utf8");
   if (bytes > GATEWAY_SPOOL_MAX_BYTES) {
     throw new Error(`spool record is ${bytes} bytes; gateway maximum is ${GATEWAY_SPOOL_MAX_BYTES}`);

@@ -1,5 +1,8 @@
 // rd-plugin bundled output — do not edit; regenerate via `npm run build`.
 
+// src/task-context.ts
+import path4 from "node:path";
+
 // src/lib/hook-input.ts
 async function readHookInput() {
   const chunks = [];
@@ -433,10 +436,10 @@ function hexToBytes(hex) {
   }
   return array;
 }
-function utf8ToBytes(str3) {
-  if (typeof str3 !== "string")
+function utf8ToBytes(str4) {
+  if (typeof str4 !== "string")
     throw new Error("string expected");
-  return new Uint8Array(new TextEncoder().encode(str3));
+  return new Uint8Array(new TextEncoder().encode(str4));
 }
 function toBytes(data) {
   if (typeof data === "string")
@@ -2866,25 +2869,6 @@ function writeJsonFileAtomic(filePath, data) {
   fs3.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 384 });
   fs3.renameSync(tmp, filePath);
 }
-function pruneStaleFiles(dir, maxAgeMs, suffix = ".jsonl") {
-  let removed = 0;
-  try {
-    const cutoff = Date.now() - maxAgeMs;
-    for (const name of fs3.readdirSync(dir)) {
-      if (!name.endsWith(suffix)) continue;
-      const full = path3.join(dir, name);
-      try {
-        if (fs3.statSync(full).mtimeMs < cutoff) {
-          fs3.rmSync(full, { force: true });
-          removed += 1;
-        }
-      } catch {
-      }
-    }
-  } catch {
-  }
-  return removed;
-}
 
 // src/lib/derive.ts
 function hexToBytes2(hex) {
@@ -3111,72 +3095,58 @@ async function mintHomeWalletToken(privateKey, options = {}) {
   return `scwt_${Buffer.from(JSON.stringify({ address, issuedAt, expiresAt, signature }), "utf8").toString("base64url")}`;
 }
 
-// src/codex/paths.ts
-import path4 from "node:path";
-var CODEX_PENDING_DIR = path4.join(STATE_DIR, "codex-pending");
-
-// src/lib/recover.ts
-import { spawn } from "node:child_process";
-import fs4 from "node:fs";
-import path5 from "node:path";
-
-// src/lib/flush-lock.ts
-var FLUSH_LOCK_STALE_MS = 10 * 60 * 1e3;
-
-// src/lib/state.ts
-function readState() {
-  const state = readJsonFile(STATE_FILE, { flushed: {} });
-  if (!state.flushed || typeof state.flushed !== "object") state.flushed = {};
-  return state;
-}
-
-// src/lib/recover.ts
-var RECOVER_MIN_AGE_MS = 6 * 60 * 60 * 1e3;
-var RECOVER_MAX_PER_START = 8;
-function needsRecovery(mtimeMs, entry) {
-  if (!entry) return true;
-  const flushedAt = Date.parse(entry.updatedAt ?? "");
-  return !Number.isFinite(flushedAt) || mtimeMs > flushedAt;
-}
-function selectQuietPendingLogs(dir, nowMs, flushed = {}, minAgeMs = RECOVER_MIN_AGE_MS, cap = RECOVER_MAX_PER_START) {
-  if (!fs4.existsSync(dir)) return [];
-  return fs4.readdirSync(dir).filter((f) => f.endsWith(".jsonl")).map((f) => ({ sessionId: f.slice(0, -".jsonl".length), mtimeMs: fs4.statSync(path5.join(dir, f)).mtimeMs })).filter((e) => nowMs - e.mtimeMs > minAgeMs && needsRecovery(e.mtimeMs, flushed[e.sessionId])).sort((a, b) => a.mtimeMs - b.mtimeMs).slice(0, cap).map((e) => e.sessionId);
-}
-function recoverQuietPendingLogs(dir, flushScriptPath) {
-  try {
-    const quiet = selectQuietPendingLogs(dir, Date.now(), readState().flushed);
-    for (const sessionId of quiet) {
-      const child = spawn(process.execPath, [flushScriptPath, sessionId], {
-        detached: true,
-        stdio: "ignore",
-        env: process.env
+// src/codex/repo.ts
+import { execFile } from "node:child_process";
+import { createHash as createHash2 } from "node:crypto";
+function git(cwd, args) {
+  return new Promise((resolve) => {
+    try {
+      execFile("git", ["-C", cwd, ...args], { timeout: 5e3 }, (error, stdout) => {
+        resolve(error ? "" : String(stdout).trim());
       });
-      child.unref();
+    } catch {
+      resolve("");
     }
-    return quiet.length;
-  } catch (err) {
-    log("debug", "pending-log recovery skipped", { error: err.message });
-    return 0;
-  }
-}
-
-// src/lib/stdout.ts
-async function writeAll(output, text) {
-  await new Promise((resolve, reject) => {
-    output.write(text, (error) => {
-      if (error) reject(error);
-      else resolve();
-    });
   });
 }
-
-// src/session-start.ts
-import fs6 from "node:fs";
-import path6 from "node:path";
-import { fileURLToPath } from "node:url";
-
-// src/lib/pending.ts
-import fs5 from "node:fs";
+function parseGitHubRemote(remoteUrl) {
+  const raw = String(remoteUrl || "").trim().replace(/\/$/, "");
+  const scp = /^(?:[^@/]+@)?github\.com:([^/]+)\/([^/]+)$/i.exec(raw);
+  if (scp) return { owner: scp[1], repository: scp[2].replace(/\.git$/i, "") };
+  try {
+    const url = new URL(raw);
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (url.hostname.toLowerCase() !== "github.com" || parts.length !== 2) return null;
+    return { owner: parts[0], repository: parts[1].replace(/\.git$/i, "") };
+  } catch {
+    return null;
+  }
+}
+async function ownedRepository(cwd, owners) {
+  if (!cwd) return null;
+  const [remoteUrl, branch, commitSha, treeHash, status] = await Promise.all([
+    git(cwd, ["remote", "get-url", "origin"]),
+    git(cwd, ["branch", "--show-current"]),
+    git(cwd, ["rev-parse", "HEAD"]),
+    git(cwd, ["rev-parse", "HEAD^{tree}"]),
+    git(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+  ]);
+  const parsed = parseGitHubRemote(remoteUrl);
+  if (!parsed) return null;
+  const owner = parsed.owner.toLowerCase();
+  if (owners !== null && !owners.includes(owner)) return null;
+  return {
+    owner,
+    repository: parsed.repository,
+    fullName: `${owner}/${parsed.repository}`,
+    remoteUrl,
+    dirty: status.length > 0,
+    dirtyStateHash: `sha256:${createHash2("sha256").update(status).digest("hex")}`,
+    ...branch ? { branch } : {},
+    .../^[0-9a-f]{40}$/i.test(commitSha) ? { commitSha: commitSha.toLowerCase() } : {},
+    .../^[0-9a-f]{40}$/i.test(treeHash) ? { treeHash: treeHash.toLowerCase() } : {}
+  };
+}
 
 // src/lib/work-provenance.ts
 var WORK_PROVENANCE_SCHEMA_VERSION = "rickydata.work_provenance.v1";
@@ -3190,8 +3160,8 @@ function record(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 function workProvenanceRefs(input, env = process.env) {
-  const nested = { ...record(input.rickydata_work), ...record(input.work_context) };
-  const pick = (snake, camel, envName) => str(input[snake]) ?? str(input[camel]) ?? str(nested[snake]) ?? str(nested[camel]) ?? str(env[envName]);
+  const nested2 = { ...record(input.rickydata_work), ...record(input.work_context) };
+  const pick = (snake, camel, envName) => str(input[snake]) ?? str(input[camel]) ?? str(nested2[snake]) ?? str(nested2[camel]) ?? str(env[envName]);
   return {
     sourceIntentRef: pick("source_intent_ref", "sourceIntentRef", "RICKYDATA_SOURCE_INTENT_REF"),
     workContractId: pick("work_contract_id", "workContractId", "RICKYDATA_WORK_CONTRACT_ID"),
@@ -3233,6 +3203,50 @@ function buildWorkProvenance(input, sequence, repository, env = process.env) {
     usage: null
   };
 }
+
+// src/lib/task-context.ts
+function str2(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : void 0;
+}
+function exactText2(value) {
+  return typeof value === "string" && value.trim() ? value : void 0;
+}
+function nested(input) {
+  const value = input.work_context ?? input.rickydata_work;
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function taskContextDescriptor(input, repoId, env = process.env) {
+  if (input.hook_event_name !== "UserPromptSubmit") return null;
+  const query = exactText2(input.prompt);
+  if (!query) return null;
+  const refs = workProvenanceRefs(input, env);
+  const details = nested(input);
+  const taskSlug = str2(input.task_slug) ?? str2(input.taskSlug) ?? str2(details.task_slug) ?? str2(details.taskSlug) ?? str2(env.RICKYDATA_TASK_SLUG);
+  return {
+    query,
+    ...taskSlug ? { taskSlug } : {},
+    context: {
+      repo_id: repoId,
+      ...refs.sourceIntentRef ? { source_intent_ref: refs.sourceIntentRef } : {},
+      ...refs.workContractId ? { work_contract_id: refs.workContractId } : {},
+      ...refs.workContractHash ? { work_contract_hash: refs.workContractHash } : {},
+      ...refs.oracleRef ? { oracle_ref: refs.oracleRef } : {}
+    }
+  };
+}
+
+// src/lib/stdout.ts
+async function writeAll(output, text) {
+  await new Promise((resolve, reject) => {
+    output.write(text, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
+// src/lib/pending.ts
+import fs4 from "node:fs";
 
 // src/lib/decision.ts
 function stringValue(value) {
@@ -3302,33 +3316,33 @@ function observableDecisionFields(input, toolResponse) {
 }
 
 // src/lib/event.ts
-function str2(value) {
+function str3(value) {
   return typeof value === "string" ? value : void 0;
 }
 function toPendingEvent(input, sequence, repository) {
-  const promptStr = str2(input.prompt);
+  const promptStr = str3(input.prompt);
   const toolResponse = input.tool_response !== void 0 ? input.tool_response : input.tool_output;
   const lastAssistant = input.last_assistant_message;
   const decision = observableDecisionFields(input, toolResponse);
   const provenanceRefs = workProvenanceRefs(input);
   return {
     sequence,
-    hookEventName: str2(input.hook_event_name) ?? "Unknown",
-    claudeSessionId: str2(input.session_id) ?? "unknown",
-    transcriptPath: str2(input.transcript_path),
-    cwd: str2(input.cwd),
-    model: str2(input.model),
-    source: str2(input.source),
+    hookEventName: str3(input.hook_event_name) ?? "Unknown",
+    claudeSessionId: str3(input.session_id) ?? "unknown",
+    transcriptPath: str3(input.transcript_path),
+    cwd: str3(input.cwd),
+    model: str3(input.model),
+    source: str3(input.source),
     receivedAt: Date.now(),
     prompt: promptStr,
-    reason: str2(input.reason),
+    reason: str3(input.reason),
     stopHookActive: typeof input.stop_hook_active === "boolean" ? input.stop_hook_active : void 0,
-    toolName: str2(input.tool_name),
-    toolUseId: str2(input.tool_use_id),
+    toolName: str3(input.tool_name),
+    toolUseId: str3(input.tool_use_id),
     toolInput: input.tool_input,
     toolResponse,
-    permissionDecision: str2(input.permission_decision),
-    permissionDecisionReason: str2(input.permission_decision_reason),
+    permissionDecision: str3(input.permission_decision),
+    permissionDecisionReason: str3(input.permission_decision_reason),
     lastAssistantMessage: typeof lastAssistant === "string" ? lastAssistant : lastAssistant === null ? null : void 0,
     hookPayload: input,
     ...decision,
@@ -3342,89 +3356,29 @@ function toPendingEvent(input, sequence, repository) {
 // src/lib/pending.ts
 function pendingCount(claudeSessionId) {
   try {
-    const raw = fs5.readFileSync(pendingFileFor(claudeSessionId), "utf8");
+    const raw = fs4.readFileSync(pendingFileFor(claudeSessionId), "utf8");
     return raw.split("\n").filter((line) => line.trim()).length;
   } catch {
     return 0;
   }
 }
 function appendPending(claudeSessionId, event) {
-  fs5.mkdirSync(PENDING_DIR, { recursive: true });
-  fs5.appendFileSync(pendingFileFor(claudeSessionId), `${JSON.stringify(event)}
+  fs4.mkdirSync(PENDING_DIR, { recursive: true });
+  fs4.appendFileSync(pendingFileFor(claudeSessionId), `${JSON.stringify(event)}
 `, { mode: 384 });
 }
 
-// src/codex/repo.ts
-import { execFile } from "node:child_process";
-import { createHash as createHash2 } from "node:crypto";
-function git(cwd, args) {
-  return new Promise((resolve) => {
-    try {
-      execFile("git", ["-C", cwd, ...args], { timeout: 5e3 }, (error, stdout) => {
-        resolve(error ? "" : String(stdout).trim());
-      });
-    } catch {
-      resolve("");
-    }
-  });
-}
-function parseGitHubRemote(remoteUrl) {
-  const raw = String(remoteUrl || "").trim().replace(/\/$/, "");
-  const scp = /^(?:[^@/]+@)?github\.com:([^/]+)\/([^/]+)$/i.exec(raw);
-  if (scp) return { owner: scp[1], repository: scp[2].replace(/\.git$/i, "") };
-  try {
-    const url = new URL(raw);
-    const parts = url.pathname.split("/").filter(Boolean);
-    if (url.hostname.toLowerCase() !== "github.com" || parts.length !== 2) return null;
-    return { owner: parts[0], repository: parts[1].replace(/\.git$/i, "") };
-  } catch {
-    return null;
-  }
-}
-async function ownedRepository(cwd, owners) {
-  if (!cwd) return null;
-  const [remoteUrl, branch, commitSha, treeHash, status] = await Promise.all([
-    git(cwd, ["remote", "get-url", "origin"]),
-    git(cwd, ["branch", "--show-current"]),
-    git(cwd, ["rev-parse", "HEAD"]),
-    git(cwd, ["rev-parse", "HEAD^{tree}"]),
-    git(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"])
-  ]);
-  const parsed = parseGitHubRemote(remoteUrl);
-  if (!parsed) return null;
-  const owner = parsed.owner.toLowerCase();
-  if (owners !== null && !owners.includes(owner)) return null;
-  return {
-    owner,
-    repository: parsed.repository,
-    fullName: `${owner}/${parsed.repository}`,
-    remoteUrl,
-    dirty: status.length > 0,
-    dirtyStateHash: `sha256:${createHash2("sha256").update(status).digest("hex")}`,
-    ...branch ? { branch } : {},
-    .../^[0-9a-f]{40}$/i.test(commitSha) ? { commitSha: commitSha.toLowerCase() } : {},
-    .../^[0-9a-f]{40}$/i.test(treeHash) ? { treeHash: treeHash.toLowerCase() } : {}
-  };
-}
-
-// src/session-start.ts
-var PENDING_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
+// src/task-context.ts
 async function main() {
   const input = await readHookInput();
   const config = loadConfig();
   setLogLevel(config.log_level);
-  const sink = resolveSink(config);
-  if (sink === "off" || !shouldTrack(config, input.cwd)) return;
-  const pruned = pruneStaleFiles(PENDING_DIR, PENDING_MAX_AGE_MS) + pruneStaleFiles(CODEX_PENDING_DIR, PENDING_MAX_AGE_MS);
-  if (pruned > 0) log("info", "pruned stale pending logs", { pruned });
-  const here = path6.dirname(fileURLToPath(import.meta.url));
-  const recovered = recoverQuietPendingLogs(PENDING_DIR, path6.join(here, "flush.mjs")) + recoverQuietPendingLogs(CODEX_PENDING_DIR, path6.join(here, "codex-flush.mjs"));
-  if (recovered > 0) log("info", "spawned recovery flushes for quiet pending logs", { recovered });
-  const cwd = input.cwd || process.cwd();
-  const workspace = path6.basename(cwd) || cwd;
+  if (resolveSink(config) === "off" || !shouldTrack(config, input.cwd)) return;
+  const cwd = typeof input.cwd === "string" ? input.cwd : process.cwd();
   const repo = await ownedRepository(cwd, null);
-  const language = detectLanguage(cwd);
-  const query = [workspace, language, "session start"].filter(Boolean).join(" ");
+  const repoId = repo?.repository ?? path4.basename(cwd) ?? cwd;
+  const descriptor = taskContextDescriptor(input, repoId);
+  if (!descriptor) return;
   let deriveHeaders;
   let homeToken;
   if (config.private_key) {
@@ -3434,91 +3388,72 @@ async function main() {
         mintHomeWalletToken(config.private_key)
       ]);
     } catch (err) {
-      log("debug", "session-start derive failed (fail-open)", { error: err.message });
+      log("debug", "task-context derive failed (fail-open)", { error: err.message });
     }
   }
-  const pack = await gatherContextPack({
+  const packInput = {
     apiUrl: config.api_url,
     apiKey: config.api_key ?? "",
     deriveHeaders,
-    query,
-    context: language ? { language } : {},
-    timeoutMs: 8500,
+    auth: {
+      apiKey: config.api_key || void 0,
+      privateKey: config.private_key || void 0,
+      deriveHeaders
+    },
+    query: descriptor.query,
+    context: descriptor.context,
+    heading: "Task-specific remembered context (KFDB)",
+    timeoutMs: 4200,
+    maxChars: 6e3,
     homeUrl: config.home_url,
     homeToken,
-    repoId: repo?.repository ?? workspace,
-    homeBudget: 4e3
-  });
-  if (pack.text) {
-    await emitContext(pack.text);
-    const sessionId = typeof input.session_id === "string" && input.session_id ? input.session_id : "unknown";
-    const repository = repo ? {
-      owner: repo.owner,
-      repository: repo.repository,
-      fullName: `${repo.owner}/${repo.repository}`,
-      remoteUrl: repo.remoteUrl,
-      branch: repo.branch,
-      commitSha: repo.commitSha,
-      treeHash: repo.treeHash,
-      dirty: repo.dirty,
-      dirtyStateHash: repo.dirtyStateHash
-    } : void 0;
-    const deliveryEvent = toPendingEvent({ ...input, hook_event_name: "ContextDelivery" }, pendingCount(sessionId), repository);
-    deliveryEvent.contextDelivery = {
-      deliveryKey: `session-start:${sessionId}`,
-      ...pack.packId ? { packId: pack.packId } : {},
-      ...pack.reproducibilityHash && /^[0-9a-f]{64}$/.test(pack.reproducibilityHash) ? { packHash: `sha256:${pack.reproducibilityHash}` } : {},
-      renderedContent: pack.text,
-      interface: "claude-code-session-start-warm",
-      coverageStatus: pack.coverageStatus,
-      omissions: pack.omissions,
-      deliveredAt: (/* @__PURE__ */ new Date()).toISOString(),
-      policyHash: pack.policyHash,
-      selectedManifestHash: pack.selectedManifestHash,
-      corpusWatermark: pack.corpusWatermark
-    };
-    appendPending(sessionId, deliveryEvent);
-    log("info", "session-start injected", {
-      sheetIds: pack.sheetIds.length,
-      workspace,
-      contextSource: pack.source,
-      coverageStatus: pack.coverageStatus,
-      reproducibilityHash: pack.reproducibilityHash,
-      deliveryReceiptQueued: true
-    });
-  }
-}
-async function emitContext(text) {
-  const payload = {
-    hookSpecificOutput: {
-      hookEventName: "SessionStart",
-      additionalContext: text
-    }
+    repoId,
+    taskSlug: descriptor.taskSlug,
+    homeBudget: 2e4
   };
-  await writeAll(process.stdout, JSON.stringify(payload));
-}
-var LANG_MARKERS = [
-  { file: "package.json", language: "typescript" },
-  { file: "tsconfig.json", language: "typescript" },
-  { file: "pyproject.toml", language: "python" },
-  { file: "requirements.txt", language: "python" },
-  { file: "Cargo.toml", language: "rust" },
-  { file: "go.mod", language: "go" },
-  { file: "pom.xml", language: "java" },
-  { file: "Gemfile", language: "ruby" }
-];
-function detectLanguage(cwd) {
-  try {
-    for (const marker of LANG_MARKERS) {
-      if (fs6.existsSync(path6.join(cwd, marker.file))) return marker.language;
-    }
-  } catch {
-  }
-  return void 0;
+  const pack = await gatherContextPack(packInput);
+  if (!pack.text) return;
+  await writeAll(process.stdout, JSON.stringify({
+    hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: pack.text }
+  }));
+  const sessionId = typeof input.session_id === "string" && input.session_id ? input.session_id : "unknown";
+  const repository = repo ? {
+    owner: repo.owner,
+    repository: repo.repository,
+    fullName: `${repo.owner}/${repo.repository}`,
+    remoteUrl: repo.remoteUrl,
+    branch: repo.branch,
+    commitSha: repo.commitSha,
+    treeHash: repo.treeHash,
+    dirty: repo.dirty,
+    dirtyStateHash: repo.dirtyStateHash
+  } : void 0;
+  const event = toPendingEvent({ ...input, hook_event_name: "ContextDelivery" }, pendingCount(sessionId), repository);
+  event.contextDelivery = {
+    deliveryKey: `user-prompt:${sessionId}:${event.sequence}`,
+    ...pack.packId ? { packId: pack.packId } : {},
+    ...pack.reproducibilityHash && /^[0-9a-f]{64}$/.test(pack.reproducibilityHash) ? { packHash: `sha256:${pack.reproducibilityHash}` } : {},
+    renderedContent: pack.text,
+    interface: "claude-code-user-prompt",
+    coverageStatus: pack.coverageStatus,
+    omissions: pack.omissions,
+    deliveredAt: (/* @__PURE__ */ new Date()).toISOString(),
+    policyHash: pack.policyHash,
+    selectedManifestHash: pack.selectedManifestHash,
+    corpusWatermark: pack.corpusWatermark
+  };
+  appendPending(sessionId, event);
+  log("info", "task-context injected", {
+    repoId,
+    taskSlug: descriptor.taskSlug,
+    contextSource: pack.source,
+    coverageStatus: pack.coverageStatus,
+    reproducibilityHash: pack.reproducibilityHash
+  });
 }
 main().catch((err) => {
   try {
-    log("debug", "session-start failed", { error: err.message });
+    log("debug", "task-context failed (fail-open)", { error: err.message });
   } catch {
   }
 }).finally(() => {

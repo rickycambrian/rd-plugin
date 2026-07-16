@@ -1,11 +1,17 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 export interface OwnedRepository {
   owner: string;
   repository: string;
+  fullName: string;
   remoteUrl: string;
   branch?: string;
   commitSha?: string;
+  treeHash?: string;
+  dirty?: boolean;
+  /** Digest of exact porcelain-v1-z state; never the file contents themselves. */
+  dirtyStateHash?: `sha256:${string}`;
 }
 
 function git(cwd: string, args: string[]): Promise<string> {
@@ -48,10 +54,12 @@ export function parseGitHubRemote(remoteUrl: string): { owner: string; repositor
  */
 export async function ownedRepository(cwd: string | undefined, owners: string[] | null): Promise<OwnedRepository | null> {
   if (!cwd) return null;
-  const [remoteUrl, branch, commitSha] = await Promise.all([
+  const [remoteUrl, branch, commitSha, treeHash, status] = await Promise.all([
     git(cwd, ['remote', 'get-url', 'origin']),
     git(cwd, ['branch', '--show-current']),
     git(cwd, ['rev-parse', 'HEAD']),
+    git(cwd, ['rev-parse', 'HEAD^{tree}']),
+    git(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
   ]);
   const parsed = parseGitHubRemote(remoteUrl);
   if (!parsed) return null;
@@ -60,8 +68,12 @@ export async function ownedRepository(cwd: string | undefined, owners: string[] 
   return {
     owner,
     repository: parsed.repository,
+    fullName: `${owner}/${parsed.repository}`,
     remoteUrl,
+    dirty: status.length > 0,
+    dirtyStateHash: `sha256:${createHash('sha256').update(status).digest('hex')}`,
     ...(branch ? { branch } : {}),
     ...(/^[0-9a-f]{40}$/i.test(commitSha) ? { commitSha: commitSha.toLowerCase() } : {}),
+    ...(/^[0-9a-f]{40}$/i.test(treeHash) ? { treeHash: treeHash.toLowerCase() } : {}),
   };
 }

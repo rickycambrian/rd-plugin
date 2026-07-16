@@ -28,6 +28,7 @@ const ENTRYPOINTS = [
   'drain-queue.ts',
   'flush.ts',
   'session-start.ts',
+  'task-context.ts',
   'setup-codex.ts',
   'setup.ts',
 ].sort();

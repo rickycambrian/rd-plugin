@@ -2969,6 +2969,11 @@ var GraphEntityKind;
   GraphEntityKind2["DecisionSourceReceipt"] = "DecisionSourceReceipt";
   GraphEntityKind2["ContextDeliveryReceipt"] = "ContextDeliveryReceipt";
   GraphEntityKind2["DecisionObservation"] = "DecisionObservation";
+  GraphEntityKind2["ObjectiveObservation"] = "ObjectiveObservation";
+  GraphEntityKind2["RepositoryStateReceipt"] = "RepositoryStateReceipt";
+  GraphEntityKind2["VerificationObservation"] = "VerificationObservation";
+  GraphEntityKind2["RunUsageReceipt"] = "RunUsageReceipt";
+  GraphEntityKind2["RunOutcomeReceipt"] = "RunOutcomeReceipt";
   GraphEntityKind2["ContentArtifact"] = "ContentArtifact";
   GraphEntityKind2["OpenQuestion"] = "OpenQuestion";
 })(GraphEntityKind || (GraphEntityKind = {}));
@@ -3019,6 +3024,12 @@ var GraphEdgeType;
   GraphEdgeType2["DeliversPack"] = "DELIVERS_PACK";
   GraphEdgeType2["ObservedInSession"] = "OBSERVED_IN_SESSION";
   GraphEdgeType2["ObservedAgainstPack"] = "OBSERVED_AGAINST_PACK";
+  GraphEdgeType2["GovernedByContract"] = "GOVERNED_BY_CONTRACT";
+  GraphEdgeType2["ObservedRepositoryState"] = "OBSERVED_REPOSITORY_STATE";
+  GraphEdgeType2["VerifiesContract"] = "VERIFIES_CONTRACT";
+  GraphEdgeType2["MeasuresRun"] = "MEASURES_RUN";
+  GraphEdgeType2["ReportsOutcome"] = "REPORTS_OUTCOME";
+  GraphEdgeType2["UsesUsageReceipt"] = "USES_USAGE_RECEIPT";
 })(GraphEdgeType || (GraphEdgeType = {}));
 var ENTITY_ID_PARTS = {
   [GraphEntityKind.Repository]: ["canonical_repo_ref"],
@@ -3062,6 +3073,11 @@ var ENTITY_ID_PARTS = {
   [GraphEntityKind.DecisionSourceReceipt]: ["decision_pack_id", "source", "receipt_key"],
   [GraphEntityKind.ContextDeliveryReceipt]: ["session_node_id", "delivery_key"],
   [GraphEntityKind.DecisionObservation]: ["session_node_id", "observation_key"],
+  [GraphEntityKind.ObjectiveObservation]: ["session_node_id", "observation_key"],
+  [GraphEntityKind.RepositoryStateReceipt]: ["session_node_id", "receipt_key"],
+  [GraphEntityKind.VerificationObservation]: ["work_contract_id", "verification_key"],
+  [GraphEntityKind.RunUsageReceipt]: ["run_node_id", "receipt_key"],
+  [GraphEntityKind.RunOutcomeReceipt]: ["run_node_id", "receipt_key"],
   [GraphEntityKind.ContentArtifact]: ["content_hash", "media_type"],
   // memory-v1: same `(source_ref, question)` ⇒ same id ⇒ idempotent merge.
   [GraphEntityKind.OpenQuestion]: ["source_ref", "question"]

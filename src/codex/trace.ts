@@ -1,4 +1,5 @@
 import type { CodexHookTrace } from 'rickydata/kfdb';
+import type { RepositorySnapshot } from 'rickydata/kfdb';
 import { type CodexPendingEvent, toTraceEvent } from './event.js';
 
 interface TurnGroup {
@@ -33,6 +34,17 @@ function firstDefined<T>(values: Array<T | undefined>): T | undefined {
   return undefined;
 }
 
+function repositoryForEvent(event: CodexPendingEvent): RepositorySnapshot | undefined {
+  if (event.repository) return event.repository;
+  if (!event.repoFullName) return undefined;
+  return {
+    owner: event.repoOwner ?? '', repository: event.repoId ?? '', fullName: event.repoFullName,
+    remoteUrl: event.repoRemoteUrl ?? '', branch: event.repoBranch, commitSha: event.repoCommitSha,
+    treeHash: event.repoTreeHash, dirty: event.repoDirty,
+    dirtyStateHash: event.repoDirtyStateHash as `sha256:${string}` | undefined,
+  };
+}
+
 export interface BuildCodexTracesInput {
   walletAddress: string;
   agentId: string;
@@ -51,22 +63,19 @@ export function buildCodexTraces(input: BuildCodexTracesInput): CodexHookTrace[]
   const groups = groupTurns(events);
   const sessionModel = firstDefined(events.map((e) => e.model));
   const sessionCwd = firstDefined(events.map((e) => e.cwd));
-  const repository = events.find((e) => e.repoFullName)?.repoFullName
-    ? {
-        owner: events.find((e) => e.repoOwner)?.repoOwner ?? '',
-        repository: events.find((e) => e.repoId)?.repoId ?? '',
-        fullName: events.find((e) => e.repoFullName)?.repoFullName ?? '',
-        remoteUrl: events.find((e) => e.repoRemoteUrl)?.repoRemoteUrl ?? '',
-        branch: events.find((e) => e.repoBranch)?.repoBranch,
-        commitSha: events.find((e) => e.repoCommitSha)?.repoCommitSha,
-      }
-    : undefined;
-
   return groups.map((group, index) => {
     const turnIndex = index + 1;
     const turnId = group.turnId ?? `${codexSessionId}-turn-${turnIndex}`;
     const model = firstDefined([...group.events.map((e) => e.model), sessionModel]);
     const cwd = firstDefined([...group.events.map((e) => e.cwd), sessionCwd]);
+    const repoEvent = group.events.find((event) => event.repoFullName);
+    const repository = repoEvent?.repoFullName
+      ? {
+          owner: repoEvent.repoOwner ?? '', repository: repoEvent.repoId ?? '',
+          fullName: repoEvent.repoFullName, remoteUrl: repoEvent.repoRemoteUrl ?? '',
+          branch: repoEvent.repoBranch, commitSha: repoEvent.repoCommitSha,
+        }
+      : undefined;
     const trace: CodexHookTrace = {
       walletAddress,
       agentId,
@@ -81,6 +90,14 @@ export function buildCodexTraces(input: BuildCodexTracesInput): CodexHookTrace[]
       events: group.events.map(toTraceEvent),
       repository,
     };
+    const baseRepository = firstDefined(group.events.map(repositoryForEvent));
+    const resultRepository = firstDefined([...group.events].reverse().map(repositoryForEvent));
+    if (baseRepository) trace.baseRepository = baseRepository;
+    if (resultRepository) trace.resultRepository = resultRepository;
+    const workContract = group.events.find((event) => event.workContract)?.workContract;
+    const sourceIntentRef = firstDefined(group.events.map((event) => event.sourceIntentRef));
+    if (workContract) trace.workContract = workContract;
+    if (sourceIntentRef) trace.sourceIntentRef = sourceIntentRef;
     return trace;
   });
 }

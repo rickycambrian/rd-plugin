@@ -1,6 +1,11 @@
 import type { CodexHookEventRecord } from 'rickydata/kfdb';
 import type { HookInput } from '../lib/hook-input.js';
 import { observableDecisionFields } from '../lib/decision.js';
+import {
+  buildWorkProvenance, normalizeWorkProvenance, sdkHookPayload, sdkWorkContractRef,
+  workProvenanceRefs, type WorkProvenanceEnvelope,
+} from '../lib/work-provenance.js';
+import type { OwnedRepository } from './repo.js';
 
 function str(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
@@ -29,6 +34,10 @@ export type CodexPendingEvent = CodexHookEventRecord & {
   repoRemoteUrl?: string;
   repoBranch?: string;
   repoCommitSha?: string;
+  repoTreeHash?: string;
+  repoDirty?: boolean;
+  repoDirtyStateHash?: string;
+  workProvenance?: WorkProvenanceEnvelope;
 };
 
 /**
@@ -40,13 +49,14 @@ export type CodexPendingEvent = CodexHookEventRecord & {
 export function toCodexPendingEvent(
   input: HookInput,
   sequence: number,
-  repo: { owner: string; repository: string; remoteUrl?: string; branch?: string; commitSha?: string },
+  repo: OwnedRepository,
 ): CodexPendingEvent {
   const promptStr = str(input.prompt);
   const lastAssistant = input.last_assistant_message;
   const toolInput = isRecord(input.tool_input) ? input.tool_input : undefined;
   const toolResponse = input.tool_response;
   const decision = observableDecisionFields(input, toolResponse);
+  const provenanceRefs = workProvenanceRefs(input);
   return {
     sequence,
     hookEventName: str(input.hook_event_name) ?? 'Unknown',
@@ -71,6 +81,18 @@ export function toCodexPendingEvent(
     repoRemoteUrl: repo.remoteUrl,
     repoBranch: repo.branch,
     repoCommitSha: repo.commitSha,
+    repoTreeHash: repo.treeHash,
+    repoDirty: repo.dirty,
+    repoDirtyStateHash: repo.dirtyStateHash,
+    repository: {
+      owner: repo.owner, repository: repo.repository, fullName: `${repo.owner}/${repo.repository}`,
+      remoteUrl: repo.remoteUrl, branch: repo.branch, commitSha: repo.commitSha,
+      treeHash: repo.treeHash, dirty: repo.dirty,
+      dirtyStateHash: repo.dirtyStateHash as `sha256:${string}` | undefined,
+    },
+    workProvenance: buildWorkProvenance(input, sequence, repo),
+    workContract: sdkWorkContractRef(provenanceRefs),
+    sourceIntentRef: provenanceRefs.sourceIntentRef,
   };
 }
 
@@ -105,6 +127,17 @@ export function normalizeCodexPendingEvent(raw: unknown, index: number): CodexPe
     repoRemoteUrl: str(e.repoRemoteUrl),
     repoBranch: str(e.repoBranch),
     repoCommitSha: str(e.repoCommitSha),
+    repoTreeHash: str(e.repoTreeHash),
+    repoDirty: typeof e.repoDirty === 'boolean' ? e.repoDirty : undefined,
+    repoDirtyStateHash: str(e.repoDirtyStateHash),
+    workProvenance: normalizeWorkProvenance(e.workProvenance),
+    workContract: e.workContract && typeof e.workContract === 'object'
+      ? e.workContract as CodexPendingEvent['workContract']
+      : undefined,
+    sourceIntentRef: str(e.sourceIntentRef),
+    repository: e.repository && typeof e.repository === 'object'
+      ? e.repository as CodexPendingEvent['repository']
+      : undefined,
     contextDelivery: e.contextDelivery && typeof e.contextDelivery === 'object'
       ? e.contextDelivery as CodexPendingEvent['contextDelivery']
       : undefined,
@@ -128,12 +161,20 @@ export function toTraceEvent(e: CodexPendingEvent): CodexHookEventRecord {
     toolUseId: e.toolUseId,
     toolInput: e.toolInput,
     toolResponse: e.toolResponse,
-    hookPayload: e.hookPayload,
+    hookPayload: sdkHookPayload(e.hookPayload, e.workProvenance),
     decisionKind: e.decisionKind,
     decisionQuestion: e.decisionQuestion,
     decisionOptions: e.decisionOptions,
     decisionAnswer: e.decisionAnswer,
     decisionPolicyRef: e.decisionPolicyRef,
     contextDelivery: e.contextDelivery,
+    repository: e.repoFullName ? {
+      owner: e.repoOwner ?? '', repository: e.repoId ?? '', fullName: e.repoFullName,
+      remoteUrl: e.repoRemoteUrl ?? '', branch: e.repoBranch, commitSha: e.repoCommitSha,
+      treeHash: e.repoTreeHash, dirty: e.repoDirty,
+      dirtyStateHash: e.repoDirtyStateHash as `sha256:${string}` | undefined,
+    } : undefined,
+    workContract: e.workContract,
+    sourceIntentRef: e.sourceIntentRef,
   };
 }

@@ -142,6 +142,7 @@ function loadCodexRepoOwners() {
 
 // src/codex/repo.ts
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 function git(cwd, args) {
   return new Promise((resolve) => {
     try {
@@ -168,10 +169,12 @@ function parseGitHubRemote(remoteUrl) {
 }
 async function ownedRepository(cwd, owners) {
   if (!cwd) return null;
-  const [remoteUrl, branch, commitSha] = await Promise.all([
+  const [remoteUrl, branch, commitSha, treeHash, status] = await Promise.all([
     git(cwd, ["remote", "get-url", "origin"]),
     git(cwd, ["branch", "--show-current"]),
-    git(cwd, ["rev-parse", "HEAD"])
+    git(cwd, ["rev-parse", "HEAD"]),
+    git(cwd, ["rev-parse", "HEAD^{tree}"]),
+    git(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"])
   ]);
   const parsed = parseGitHubRemote(remoteUrl);
   if (!parsed) return null;
@@ -180,9 +183,13 @@ async function ownedRepository(cwd, owners) {
   return {
     owner,
     repository: parsed.repository,
+    fullName: `${owner}/${parsed.repository}`,
     remoteUrl,
+    dirty: status.length > 0,
+    dirtyStateHash: `sha256:${createHash("sha256").update(status).digest("hex")}`,
     ...branch ? { branch } : {},
-    .../^[0-9a-f]{40}$/i.test(commitSha) ? { commitSha: commitSha.toLowerCase() } : {}
+    .../^[0-9a-f]{40}$/i.test(commitSha) ? { commitSha: commitSha.toLowerCase() } : {},
+    .../^[0-9a-f]{40}$/i.test(treeHash) ? { treeHash: treeHash.toLowerCase() } : {}
   };
 }
 
@@ -253,8 +260,64 @@ function observableDecisionFields(input, toolResponse) {
   return void 0;
 }
 
-// src/codex/event.ts
+// src/lib/work-provenance.ts
+var WORK_PROVENANCE_SCHEMA_VERSION = "rickydata.work_provenance.v1";
 function str(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : void 0;
+}
+function exactText(value) {
+  return typeof value === "string" && value.trim() ? value : void 0;
+}
+function record2(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function workProvenanceRefs(input, env = process.env) {
+  const nested = { ...record2(input.rickydata_work), ...record2(input.work_context) };
+  const pick = (snake, camel, envName) => str(input[snake]) ?? str(input[camel]) ?? str(nested[snake]) ?? str(nested[camel]) ?? str(env[envName]);
+  return {
+    sourceIntentRef: pick("source_intent_ref", "sourceIntentRef", "RICKYDATA_SOURCE_INTENT_REF"),
+    workContractId: pick("work_contract_id", "workContractId", "RICKYDATA_WORK_CONTRACT_ID"),
+    workContractHash: pick("work_contract_hash", "workContractHash", "RICKYDATA_WORK_CONTRACT_HASH"),
+    oracleRef: pick("oracle_ref", "oracleRef", "RICKYDATA_ORACLE_REF"),
+    workContractNodeId: pick("work_contract_node_id", "workContractNodeId", "RICKYDATA_WORK_CONTRACT_NODE_ID"),
+    workContractSchemaVersion: pick("work_contract_schema_version", "workContractSchemaVersion", "RICKYDATA_WORK_CONTRACT_SCHEMA_VERSION")
+  };
+}
+function sdkWorkContractRef(refs) {
+  const { workContractId, workContractHash, workContractNodeId, workContractSchemaVersion } = refs;
+  if (!workContractId || !workContractHash || !workContractNodeId || !workContractSchemaVersion) return void 0;
+  if (!/^sha256:[0-9a-f]{64}$/.test(workContractHash)) return void 0;
+  return {
+    contractId: workContractId,
+    contractHash: workContractHash,
+    nodeId: workContractNodeId,
+    schemaVersion: workContractSchemaVersion,
+    ...refs.sourceIntentRef ? { sourceIntentRef: refs.sourceIntentRef } : {}
+  };
+}
+function buildWorkProvenance(input, sequence, repository, env = process.env) {
+  const eventName = str(input.hook_event_name) ?? "Unknown";
+  const refs = workProvenanceRefs(input, env);
+  const hasRefs = Object.values(refs).some(Boolean);
+  const prompt = eventName === "UserPromptSubmit" ? exactText(input.prompt) : void 0;
+  const terminal = eventName === "Stop" || eventName === "SessionEnd" ? {
+    event: eventName,
+    ...repository?.commitSha ? { resultCommitSha: repository.commitSha } : {},
+    ...repository?.treeHash ? { resultTreeHash: repository.treeHash } : {},
+    usage: null
+  } : void 0;
+  return {
+    schemaVersion: WORK_PROVENANCE_SCHEMA_VERSION,
+    ...repository ? { repository } : {},
+    ...prompt ? { objective: { text: prompt, observedAt: Date.now(), promptSequence: sequence, ...refs } } : {},
+    ...hasRefs ? { refs } : {},
+    ...terminal ? { terminal } : {},
+    usage: null
+  };
+}
+
+// src/codex/event.ts
+function str2(value) {
   return typeof value === "string" ? value : void 0;
 }
 function isRecord(value) {
@@ -264,24 +327,25 @@ function compactPayload(value) {
   return value;
 }
 function toCodexPendingEvent(input, sequence, repo) {
-  const promptStr = str(input.prompt);
+  const promptStr = str2(input.prompt);
   const lastAssistant = input.last_assistant_message;
   const toolInput = isRecord(input.tool_input) ? input.tool_input : void 0;
   const toolResponse = input.tool_response;
   const decision = observableDecisionFields(input, toolResponse);
+  const provenanceRefs = workProvenanceRefs(input);
   return {
     sequence,
-    hookEventName: str(input.hook_event_name) ?? "Unknown",
-    codexSessionId: str(input.session_id) ?? "unknown",
-    turnId: str(input.turn_id),
-    model: str(input.model),
-    cwd: str(input.cwd),
+    hookEventName: str2(input.hook_event_name) ?? "Unknown",
+    codexSessionId: str2(input.session_id) ?? "unknown",
+    turnId: str2(input.turn_id),
+    model: str2(input.model),
+    cwd: str2(input.cwd),
     receivedAt: Date.now(),
     prompt: promptStr,
     lastAssistantMessage: typeof lastAssistant === "string" ? lastAssistant : lastAssistant === null ? null : void 0,
     stopHookActive: typeof input.stop_hook_active === "boolean" ? input.stop_hook_active : void 0,
-    toolName: str(input.tool_name),
-    toolUseId: str(input.tool_use_id),
+    toolName: str2(input.tool_name),
+    toolUseId: str2(input.tool_use_id),
     toolInput: toolInput === void 0 ? void 0 : compactPayload(toolInput),
     toolResponse: toolResponse === void 0 ? void 0 : compactPayload(toolResponse),
     hookPayload: input,
@@ -291,7 +355,24 @@ function toCodexPendingEvent(input, sequence, repo) {
     repoFullName: `${repo.owner}/${repo.repository}`,
     repoRemoteUrl: repo.remoteUrl,
     repoBranch: repo.branch,
-    repoCommitSha: repo.commitSha
+    repoCommitSha: repo.commitSha,
+    repoTreeHash: repo.treeHash,
+    repoDirty: repo.dirty,
+    repoDirtyStateHash: repo.dirtyStateHash,
+    repository: {
+      owner: repo.owner,
+      repository: repo.repository,
+      fullName: `${repo.owner}/${repo.repository}`,
+      remoteUrl: repo.remoteUrl,
+      branch: repo.branch,
+      commitSha: repo.commitSha,
+      treeHash: repo.treeHash,
+      dirty: repo.dirty,
+      dirtyStateHash: repo.dirtyStateHash
+    },
+    workProvenance: buildWorkProvenance(input, sequence, repo),
+    workContract: sdkWorkContractRef(provenanceRefs),
+    sourceIntentRef: provenanceRefs.sourceIntentRef
   };
 }
 

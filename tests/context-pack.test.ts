@@ -42,6 +42,7 @@ describe('gatherContextPack', () => {
     const pack = await gatherContextPack({
       apiUrl: 'https://kfdb.example', apiKey: '', query: 'rickydata_home typescript session start',
       homeUrl: 'https://home.example', homeToken: 'scwt_test', repoId: 'rickydata_home',
+      homeBudget: 4000,
     });
 
     expect(calls).toHaveLength(1);
@@ -49,6 +50,7 @@ describe('gatherContextPack', () => {
       url: expect.stringContaining('/api/context-pack?repo=rickydata_home'),
       auth: 'Bearer scwt_test',
     }));
+    expect(calls[0].url).toContain('budget=4000');
     expect(pack.source).toBe('home');
     expect(pack.coverageStatus).toBe('bounded');
     expect(pack.reproducibilityHash).toBe('a'.repeat(64));
@@ -57,6 +59,28 @@ describe('gatherContextPack', () => {
     }
     expect(pack.text).toContain('2 wiki item(s): budget');
     expect(pack.text).toContain('wiki:old');
+  });
+
+  it('requests a task-anchored immutable pack when a prospective task slug is available', async () => {
+    let requested = '';
+    globalThis.fetch = vi.fn(async (url) => {
+      requested = String(url);
+      return json({
+        version: 'context-pack/v1', reproducibility_hash: 'd'.repeat(64), context_pack_id: 'pack-task-1',
+        anchor: { kind: 'task', taskSlug: 'work-contract-1' }, invariants: [], verification: [],
+        work_in_progress: [], wiki: [], lessons: [], decisions: [], traps: [], open_questions: [],
+        selected_items: [], omitted: [], omitted_items: [], coverage: { status: 'complete', sources: [] },
+      });
+    }) as typeof fetch;
+    const pack = await gatherContextPack({
+      apiUrl: 'https://kfdb.example', apiKey: '', query: 'implement the exact oracle',
+      homeUrl: 'https://home.example', homeToken: 'scwt_test', repoId: 'rd-plugin',
+      taskSlug: 'work-contract-1', homeBudget: 20000,
+    });
+    expect(requested).toContain('repo=rd-plugin');
+    expect(requested).toContain('task=work-contract-1');
+    expect(requested).toContain('budget=20000');
+    expect(pack.packId).toBe('pack-task-1');
   });
 
   it('labels the answer-sheet fallback incomplete when Home is unavailable', async () => {

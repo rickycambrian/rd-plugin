@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/capture.mjs",
+            "command": "tmp=$(mktemp); cat > \"$tmp\"; node ${CLAUDE_PLUGIN_ROOT}/dist/capture.mjs < \"$tmp\"; node ${CLAUDE_PLUGIN_ROOT}/dist/task-context.mjs < \"$tmp\"; rm -f \"$tmp\"",
             "timeout": 5
           }
         ]

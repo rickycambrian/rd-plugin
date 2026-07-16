@@ -8,6 +8,7 @@ import { loadConfig, resolveSink, shouldTrack } from './lib/config.js';
 import { setLogLevel, log } from './lib/log.js';
 import { wantsHelp } from './lib/cli-help.js';
 import { ownedRepository } from './codex/repo.js';
+import { spawnRickygitArm } from './lib/rickygit-arm.js';
 
 const USAGE = `usage: node capture.mjs [--spawn-flush] [--final]
 
@@ -54,9 +55,16 @@ async function main(): Promise<void> {
     remoteUrl: repo.remoteUrl,
     branch: repo.branch,
     commitSha: repo.commitSha,
+    treeHash: repo.treeHash,
+    dirty: repo.dirty,
+    dirtyStateHash: repo.dirtyStateHash,
   } : undefined;
   const event = toPendingEvent(input, sequence, repository);
   appendPending(sessionId, event);
+  // UserPromptSubmit is the first lifecycle point where the exact objective is
+  // observable. Arm rickydata_git asynchronously; its session-keyed adapter is
+  // idempotent and reuses Home-launched attempts instead of minting duplicates.
+  spawnRickygitArm(input);
 
   if (spawnFlush) {
     spawnDetachedFlush(sessionId, final);

@@ -3,6 +3,7 @@ import { appendPending, readPending, pendingCount, clearPending } from '../src/l
 import { toPendingEvent } from '../src/lib/event.js';
 import { computeFingerprint } from '../src/lib/state.js';
 import type { HookInput } from '../src/lib/hook-input.js';
+import type { OwnedRepository } from '../src/codex/repo.js';
 
 const SID = 'cap-test-session';
 
@@ -51,6 +52,52 @@ describe('toPendingEvent', () => {
       decisionKind: 'tool_permission', decisionAnswer: 'allow', decisionPolicyRef: 'policy:deploy',
     });
     expect(permission.decisionOptions).toEqual(['allow', 'deny']);
+  });
+
+  it('captures a prospective objective boundary before tools and keeps unknown usage null', () => {
+    const repository: OwnedRepository = {
+      owner: 'rickycambrian', repository: 'rd-plugin', remoteUrl: 'git@github.com:rickycambrian/rd-plugin.git',
+      fullName: 'rickycambrian/rd-plugin',
+      branch: 'main', commitSha: 'a'.repeat(40), treeHash: 'b'.repeat(40), dirty: true,
+      dirtyStateHash: `sha256:${'c'.repeat(64)}`,
+    };
+    const event = toPendingEvent(hook({
+      hook_event_name: 'UserPromptSubmit', prompt: '  Implement the verified contract.  ',
+      source_intent_ref: 'operator-request:req-1', work_contract_id: 'wc-1',
+      work_contract_hash: `sha256:${'d'.repeat(64)}`, oracle_ref: 'oracle:red-1',
+      work_contract_node_id: 'work-contract-node-1', work_contract_schema_version: 'rickydata.work_contract.v1',
+    }), 1, repository);
+
+    expect(event.workProvenance).toEqual(expect.objectContaining({
+      schemaVersion: 'rickydata.work_provenance.v1',
+      repository,
+      objective: expect.objectContaining({
+        text: '  Implement the verified contract.  ',
+        sourceIntentRef: 'operator-request:req-1',
+        workContractId: 'wc-1',
+        oracleRef: 'oracle:red-1',
+      }),
+      usage: null,
+    }));
+    expect(event.hookPayload).not.toHaveProperty('rickydata_work_provenance');
+    expect(event.repository?.treeHash).toBe('b'.repeat(40));
+    expect(event.workContract).toEqual(expect.objectContaining({
+      contractId: 'wc-1', nodeId: 'work-contract-node-1', sourceIntentRef: 'operator-request:req-1',
+    }));
+    expect(event.sourceIntentRef).toBe('operator-request:req-1');
+  });
+
+  it('captures the terminal repository state and leaves unavailable usage unknown', () => {
+    const repository: OwnedRepository = {
+      owner: 'rickycambrian', repository: 'rd-plugin', remoteUrl: 'https://github.com/rickycambrian/rd-plugin',
+      fullName: 'rickycambrian/rd-plugin',
+      commitSha: 'e'.repeat(40), treeHash: 'f'.repeat(40), dirty: false,
+      dirtyStateHash: `sha256:${'0'.repeat(64)}`,
+    };
+    const event = toPendingEvent(hook({ hook_event_name: 'Stop' }), 9, repository);
+    expect(event.workProvenance?.terminal).toEqual({
+      event: 'Stop', resultCommitSha: 'e'.repeat(40), resultTreeHash: 'f'.repeat(40), usage: null,
+    });
   });
 });
 

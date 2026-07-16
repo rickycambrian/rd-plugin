@@ -1,6 +1,10 @@
 import type { ClaudeCodeHookEventRecord } from 'rickydata/kfdb';
 import type { HookInput } from './hook-input.js';
-import type { RepositorySnapshot } from 'rickydata/kfdb';
+import type { OwnedRepository } from '../codex/repo.js';
+import {
+  buildWorkProvenance, normalizeWorkProvenance, sdkWorkContractRef,
+  workProvenanceRefs, type WorkProvenanceEnvelope,
+} from './work-provenance.js';
 import { observableDecisionFields } from './decision.js';
 
 function str(value: unknown): string | undefined {
@@ -16,18 +20,20 @@ function str(value: unknown): string | undefined {
  */
 export type PendingEvent = ClaudeCodeHookEventRecord & {
   lastAssistantMessage?: string | null;
-  repository?: RepositorySnapshot;
+  repository?: OwnedRepository;
+  workProvenance?: WorkProvenanceEnvelope;
 };
 
 /**
  * Project a raw Claude Code hook stdin object into a normalized PendingEvent.
  * Fast + allocation-light — this runs on the session hot path in capture.
  */
-export function toPendingEvent(input: HookInput, sequence: number, repository?: RepositorySnapshot): PendingEvent {
+export function toPendingEvent(input: HookInput, sequence: number, repository?: OwnedRepository): PendingEvent {
   const promptStr = str(input.prompt);
   const toolResponse = input.tool_response !== undefined ? input.tool_response : input.tool_output;
   const lastAssistant = input.last_assistant_message;
   const decision = observableDecisionFields(input, toolResponse);
+  const provenanceRefs = workProvenanceRefs(input);
   return {
     sequence,
     hookEventName: str(input.hook_event_name) ?? 'Unknown',
@@ -51,6 +57,9 @@ export function toPendingEvent(input: HookInput, sequence: number, repository?: 
     hookPayload: input,
     ...decision,
     repository,
+    workContract: sdkWorkContractRef(provenanceRefs),
+    sourceIntentRef: provenanceRefs.sourceIntentRef,
+    workProvenance: buildWorkProvenance(input, sequence, repository as OwnedRepository | undefined),
   };
 }
 
@@ -83,7 +92,14 @@ export function normalizePendingEvent(raw: unknown, index: number): PendingEvent
     decisionOptions: Array.isArray(e.decisionOptions) ? e.decisionOptions.filter((item): item is string => typeof item === 'string') : undefined,
     decisionAnswer: str(e.decisionAnswer),
     decisionPolicyRef: str(e.decisionPolicyRef),
-    repository: e.repository && typeof e.repository === 'object' ? e.repository as unknown as RepositorySnapshot : undefined,
+    repository: e.repository && typeof e.repository === 'object'
+      ? e.repository as unknown as OwnedRepository
+      : undefined,
+    workProvenance: normalizeWorkProvenance(e.workProvenance),
+    workContract: e.workContract && typeof e.workContract === 'object'
+      ? e.workContract as PendingEvent['workContract']
+      : undefined,
+    sourceIntentRef: str(e.sourceIntentRef),
     contextDelivery: e.contextDelivery && typeof e.contextDelivery === 'object'
       ? e.contextDelivery as PendingEvent['contextDelivery']
       : undefined,

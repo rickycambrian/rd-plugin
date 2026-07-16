@@ -76,6 +76,7 @@ async function main(): Promise<void> {
     homeUrl: config.home_url,
     homeToken,
     repoId: repo?.repository ?? workspace,
+    homeBudget: 4_000,
   });
 
   if (pack.text) {
@@ -88,6 +89,9 @@ async function main(): Promise<void> {
       remoteUrl: repo.remoteUrl,
       branch: repo.branch,
       commitSha: repo.commitSha,
+      treeHash: repo.treeHash,
+      dirty: repo.dirty,
+      dirtyStateHash: repo.dirtyStateHash,
     } : undefined;
     const deliveryEvent = toPendingEvent({ ...input, hook_event_name: 'ContextDelivery' }, pendingCount(sessionId), repository);
     deliveryEvent.contextDelivery = {
@@ -97,10 +101,13 @@ async function main(): Promise<void> {
         ? { packHash: `sha256:${pack.reproducibilityHash}` as const }
         : {}),
       renderedContent: pack.text,
-      interface: 'claude-code-session-start',
+      interface: 'claude-code-session-start-warm',
       coverageStatus: pack.coverageStatus,
       omissions: pack.omissions,
       deliveredAt: new Date().toISOString(),
+      policyHash: pack.policyHash,
+      selectedManifestHash: pack.selectedManifestHash,
+      corpusWatermark: pack.corpusWatermark,
     };
     appendPending(sessionId, deliveryEvent);
     log('info', 'session-start injected', {

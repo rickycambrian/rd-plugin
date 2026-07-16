@@ -75,6 +75,22 @@ describe('codex trace grouping', () => {
     expect(t[1].model).toBe('gpt-5.3-codex'); // session-wide fallback for a turn with no model event
     expect(t[0].repository).toEqual(expect.objectContaining({ fullName: 'rickycambrian/repo', branch: 'main', commitSha: 'a'.repeat(40) }));
   });
+
+  it('chooses repository state per turn instead of collapsing the session to its first commit', () => {
+    const events = codexEvents();
+    for (const event of events.slice(0, 3)) Object.assign(event, {
+      repoOwner: 'rickycambrian', repoId: 'repo', repoFullName: 'rickycambrian/repo',
+      repoRemoteUrl: 'x', repoCommitSha: 'a'.repeat(40),
+    });
+    for (const event of events.slice(3)) Object.assign(event, {
+      repoOwner: 'rickycambrian', repoId: 'repo', repoFullName: 'rickycambrian/repo',
+      repoRemoteUrl: 'x', repoCommitSha: 'b'.repeat(40),
+    });
+    const result = buildCodexTraces({ walletAddress: WALLET, agentId: AGENT, codexSessionId: 'cx-session-1', events });
+    expect(result.map((trace) => trace.repository?.commitSha)).toEqual(['a'.repeat(40), 'b'.repeat(40)]);
+    expect(result[0].baseRepository?.commitSha).toBe('a'.repeat(40));
+    expect(result[0].resultRepository?.commitSha).toBe('a'.repeat(40));
+  });
 });
 
 describe('codex graph operations', () => {
@@ -182,7 +198,10 @@ describe('codex config', () => {
 
 describe('codex capture owner-gate', () => {
   const directEnv = { RICKYDATA_KG_SINK: 'direct' } as unknown as NodeJS.ProcessEnv;
-  const owned = async () => ({ owner: 'rickycambrian', repository: 'rd-plugin', remoteUrl: 'git@github.com:rickycambrian/rd-plugin.git' });
+  const owned = async () => ({
+    owner: 'rickycambrian', repository: 'rd-plugin', fullName: 'rickycambrian/rd-plugin',
+    remoteUrl: 'git@github.com:rickycambrian/rd-plugin.git',
+  });
   const notOwned = async () => null;
 
   function input(overrides: Partial<HookInput>): HookInput {

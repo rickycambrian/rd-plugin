@@ -1,6 +1,7 @@
-import type { ClaudeCodeHookTrace } from 'rickydata/kfdb';
+import type { ClaudeCodeHookTrace, RepositorySnapshot } from 'rickydata/kfdb';
 import type { PendingEvent } from './event.js';
 import type { TranscriptSummary } from './transcript.js';
+import { sdkHookPayload } from './work-provenance.js';
 
 /** Stable agent id for Claude Code sessions in the execution graph. */
 export const RD_AGENT_ID = process.env.RD_KG_AGENT_ID || 'claude-code';
@@ -68,8 +69,6 @@ export function buildTraces(input: BuildTracesInput): ClaudeCodeHookTrace[] {
   // Transcript wins (it sees the true first prompt across parent sessions); the
   // event fallback keeps the field present when the transcript is unavailable.
   const sessionInitialPrompt = firstDefined([summary?.initialPrompt, firstUserPromptText(events)]);
-  const repository = events.find((event) => event.repository)?.repository;
-
   return groups.map((group, index) => {
     const turnModel = firstDefined([...group.map((e) => e.model), sessionModel]);
     const turnCwd = firstDefined([...group.map((e) => e.cwd), sessionCwd]);
@@ -83,12 +82,24 @@ export function buildTraces(input: BuildTracesInput): ClaudeCodeHookTrace[] {
       cwd: turnCwd,
       startedAt: group[0].receivedAt,
       completedAt: group[group.length - 1].receivedAt,
-      events: group,
+      events: group.map((event) => ({
+        ...event,
+        hookPayload: sdkHookPayload(event.hookPayload, event.workProvenance),
+      })),
     };
     if (sessionInitialPrompt !== undefined) trace.initialPrompt = sessionInitialPrompt;
     if (summary?.filesChanged !== undefined) trace.filesChanged = summary.filesChanged;
     if (summary?.parentSessionId !== undefined) trace.parentSessionId = summary.parentSessionId;
-    if (repository !== undefined) trace.repository = repository;
+    const repository = group.find((event) => event.repository)?.repository;
+    if (repository?.fullName !== undefined) trace.repository = repository as RepositorySnapshot;
+    const baseRepository = group.find((event) => event.repository?.fullName)?.repository;
+    const resultRepository = [...group].reverse().find((event) => event.repository?.fullName)?.repository;
+    if (baseRepository?.fullName) trace.baseRepository = baseRepository as RepositorySnapshot;
+    if (resultRepository?.fullName) trace.resultRepository = resultRepository as RepositorySnapshot;
+    const workContract = group.find((event) => event.workContract)?.workContract;
+    const sourceIntentRef = firstDefined(group.map((event) => event.sourceIntentRef));
+    if (workContract) trace.workContract = workContract;
+    if (sourceIntentRef) trace.sourceIntentRef = sourceIntentRef;
     return trace;
   });
 }

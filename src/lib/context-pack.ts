@@ -1,5 +1,6 @@
 import { postJson } from './http.js';
 import type { DeriveHeaders } from './derive.js';
+import { createHash } from 'node:crypto';
 
 /**
  * SessionStart context-pack builder. Ports the answer-sheets injection: a
@@ -32,6 +33,10 @@ export interface ContextPackInput {
   homeUrl?: string;
   homeToken?: string;
   repoId?: string;
+  /** Optional prospective task/work slug; never place the private prompt in the URL. */
+  taskSlug?: string;
+  /** Compiler token budget. Session warm-start is deliberately smaller. */
+  homeBudget?: number;
 }
 
 export interface ContextPack {
@@ -41,6 +46,9 @@ export interface ContextPack {
   coverageStatus: 'complete' | 'bounded' | 'incomplete';
   reproducibilityHash?: string;
   packId?: string;
+  policyHash?: `sha256:${string}`;
+  selectedManifestHash?: `sha256:${string}`;
+  corpusWatermark?: string;
   omissions: Array<{ source: string; reason: string; count?: number }>;
 }
 
@@ -48,6 +56,9 @@ interface HomeContextPack {
   version?: string;
   reproducibility_hash?: string;
   context_pack_id?: string;
+  policy_hash?: string;
+  selected_manifest_hash?: string;
+  corpus_watermark?: string;
   token_estimate?: number;
   anchor?: { kind?: string; surface?: string; taskSlug?: string; repoId?: string; lesson?: string };
   brief?: string;
@@ -111,7 +122,12 @@ function renderHomePack(pack: HomeContextPack): string {
 
 async function fetchHomePack(input: ContextPackInput): Promise<HomeContextPack | null> {
   if (!input.homeUrl || !input.homeToken || !input.repoId) return null;
-  const params = new URLSearchParams({ repo: input.repoId, budget: '24000', consumer: 'plugin' });
+  const params = new URLSearchParams({
+    repo: input.repoId,
+    budget: String(input.homeBudget ?? 24_000),
+    consumer: 'plugin',
+  });
+  if (input.taskSlug) params.set('task', input.taskSlug);
   const controller = new AbortController();
   // A real cold rd-plugin repo compile crossed the old 4.2s cap and forced an
   // incomplete fallback; warm SWR reads are still fast. Completeness is the
@@ -192,6 +208,13 @@ export async function gatherContextPack(input: ContextPackInput): Promise<Contex
   const triedHome = Boolean(input.homeUrl && input.homeToken && input.repoId);
   const homePack = await fetchHomePack(input);
   if (homePack) {
+    const shaRef = (value: string | undefined): `sha256:${string}` | undefined => {
+      if (!value) return undefined;
+      const normalized = value.startsWith('sha256:') ? value : `sha256:${value}`;
+      return /^sha256:[0-9a-f]{64}$/.test(normalized) ? normalized as `sha256:${string}` : undefined;
+    };
+    const selectedManifestHash = shaRef(homePack.selected_manifest_hash)
+      ?? `sha256:${createHash('sha256').update(JSON.stringify(homePack.selected_items ?? [])).digest('hex')}` as const;
     return {
       text: renderHomePack(homePack),
       sheetIds: [],
@@ -199,6 +222,9 @@ export async function gatherContextPack(input: ContextPackInput): Promise<Contex
       coverageStatus: homeCoverageStatus(homePack),
       ...(homePack.reproducibility_hash ? { reproducibilityHash: homePack.reproducibility_hash } : {}),
       ...(homePack.context_pack_id ? { packId: homePack.context_pack_id } : {}),
+      ...(shaRef(homePack.policy_hash) ? { policyHash: shaRef(homePack.policy_hash) } : {}),
+      selectedManifestHash,
+      ...(homePack.corpus_watermark ? { corpusWatermark: homePack.corpus_watermark } : {}),
       omissions: [
         ...(homePack.omitted ?? []).map((row) => ({ source: row.section ?? 'unknown', reason: row.reason ?? 'unknown', ...(row.count !== undefined ? { count: row.count } : {}) })),
         ...(homePack.omitted_items ?? []).map((row) => ({ source: `${row.section ?? 'unknown'}:${row.id ?? 'unknown'}`, reason: row.reason ?? 'unknown', count: 1 })),

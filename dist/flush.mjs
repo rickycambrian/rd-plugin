@@ -828,6 +828,20 @@ function log(level, message, fields = {}) {
 // src/lib/pending.ts
 import fs3 from "node:fs";
 
+// src/lib/work-provenance.ts
+var WORK_PROVENANCE_SCHEMA_VERSION = "rickydata.work_provenance.v1";
+function record(value3) {
+  return value3 && typeof value3 === "object" && !Array.isArray(value3) ? value3 : {};
+}
+function sdkHookPayload(payload, provenance) {
+  if (!provenance) return payload;
+  return { ...record(payload), rickydata_work_provenance: provenance };
+}
+function normalizeWorkProvenance(value3) {
+  const item = record(value3);
+  return item.schemaVersion === WORK_PROVENANCE_SCHEMA_VERSION ? item : void 0;
+}
+
 // src/lib/event.ts
 function str(value3) {
   return typeof value3 === "string" ? value3 : void 0;
@@ -860,6 +874,9 @@ function normalizePendingEvent(raw, index) {
     decisionAnswer: str(e.decisionAnswer),
     decisionPolicyRef: str(e.decisionPolicyRef),
     repository: e.repository && typeof e.repository === "object" ? e.repository : void 0,
+    workProvenance: normalizeWorkProvenance(e.workProvenance),
+    workContract: e.workContract && typeof e.workContract === "object" ? e.workContract : void 0,
+    sourceIntentRef: str(e.sourceIntentRef),
     contextDelivery: e.contextDelivery && typeof e.contextDelivery === "object" ? e.contextDelivery : void 0
   };
 }
@@ -3250,6 +3267,11 @@ var GraphEntityKind;
   GraphEntityKind2["DecisionSourceReceipt"] = "DecisionSourceReceipt";
   GraphEntityKind2["ContextDeliveryReceipt"] = "ContextDeliveryReceipt";
   GraphEntityKind2["DecisionObservation"] = "DecisionObservation";
+  GraphEntityKind2["ObjectiveObservation"] = "ObjectiveObservation";
+  GraphEntityKind2["RepositoryStateReceipt"] = "RepositoryStateReceipt";
+  GraphEntityKind2["VerificationObservation"] = "VerificationObservation";
+  GraphEntityKind2["RunUsageReceipt"] = "RunUsageReceipt";
+  GraphEntityKind2["RunOutcomeReceipt"] = "RunOutcomeReceipt";
   GraphEntityKind2["ContentArtifact"] = "ContentArtifact";
   GraphEntityKind2["OpenQuestion"] = "OpenQuestion";
 })(GraphEntityKind || (GraphEntityKind = {}));
@@ -3300,6 +3322,12 @@ var GraphEdgeType;
   GraphEdgeType2["DeliversPack"] = "DELIVERS_PACK";
   GraphEdgeType2["ObservedInSession"] = "OBSERVED_IN_SESSION";
   GraphEdgeType2["ObservedAgainstPack"] = "OBSERVED_AGAINST_PACK";
+  GraphEdgeType2["GovernedByContract"] = "GOVERNED_BY_CONTRACT";
+  GraphEdgeType2["ObservedRepositoryState"] = "OBSERVED_REPOSITORY_STATE";
+  GraphEdgeType2["VerifiesContract"] = "VERIFIES_CONTRACT";
+  GraphEdgeType2["MeasuresRun"] = "MEASURES_RUN";
+  GraphEdgeType2["ReportsOutcome"] = "REPORTS_OUTCOME";
+  GraphEdgeType2["UsesUsageReceipt"] = "USES_USAGE_RECEIPT";
 })(GraphEdgeType || (GraphEdgeType = {}));
 var ENTITY_ID_PARTS = {
   [GraphEntityKind.Repository]: ["canonical_repo_ref"],
@@ -3343,6 +3371,11 @@ var ENTITY_ID_PARTS = {
   [GraphEntityKind.DecisionSourceReceipt]: ["decision_pack_id", "source", "receipt_key"],
   [GraphEntityKind.ContextDeliveryReceipt]: ["session_node_id", "delivery_key"],
   [GraphEntityKind.DecisionObservation]: ["session_node_id", "observation_key"],
+  [GraphEntityKind.ObjectiveObservation]: ["session_node_id", "observation_key"],
+  [GraphEntityKind.RepositoryStateReceipt]: ["session_node_id", "receipt_key"],
+  [GraphEntityKind.VerificationObservation]: ["work_contract_id", "verification_key"],
+  [GraphEntityKind.RunUsageReceipt]: ["run_node_id", "receipt_key"],
+  [GraphEntityKind.RunOutcomeReceipt]: ["run_node_id", "receipt_key"],
   [GraphEntityKind.ContentArtifact]: ["content_hash", "media_type"],
   // memory-v1: same `(source_ref, question)` ⇒ same id ⇒ idempotent merge.
   [GraphEntityKind.OpenQuestion]: ["source_ref", "question"]
@@ -3553,6 +3586,10 @@ function splitUtf8(content, maxBytes) {
 function buildContextDeliveryReceiptOperations(input) {
   if (input.packHash)
     assertHash(input.packHash, "packHash");
+  if (input.policyHash)
+    assertHash(input.policyHash, "policyHash");
+  if (input.selectedManifestHash)
+    assertHash(input.selectedManifestHash, "selectedManifestHash");
   const receiptId = deriveRickydataGraphId(GraphEntityKind.ContextDeliveryReceipt, [
     assertNonEmpty(input.session.nodeId, "session.nodeId"),
     assertNonEmpty(input.deliveryKey, "deliveryKey")
@@ -3569,7 +3606,10 @@ function buildContextDeliveryReceiptOperations(input) {
       interface: input.interface,
       coverage_status: input.coverageStatus,
       omissions: input.omissions,
-      delivered_at: input.deliveredAt
+      delivered_at: input.deliveredAt,
+      policy_hash: input.policyHash,
+      selected_manifest_hash: input.selectedManifestHash,
+      corpus_watermark: input.corpusWatermark
     }),
     edge(receiptId, GraphEdgeType.DeliveredToSession, input.session.nodeId, { session_label: input.session.label }),
     edge(receiptId, GraphEdgeType.IncludesArtifact, input.renderedArtifact.artifactId, { role: "rendered-context" })
@@ -3703,10 +3743,10 @@ function extractCommand(input) {
     return input;
   if (!input || typeof input !== "object")
     return null;
-  const record = input;
+  const record2 = input;
   for (const key of ["command", "cmd", "script"]) {
-    if (typeof record[key] === "string" && record[key])
-      return record[key];
+    if (typeof record2[key] === "string" && record2[key])
+      return record2[key];
   }
   return null;
 }
@@ -3751,7 +3791,10 @@ function eventData(event, contentArtifacts) {
     contextDelivery: event.contextDelivery === void 0 ? void 0 : {
       ...event.contextDelivery,
       renderedContent: summarizePayload(event.contextDelivery.renderedContent)
-    }
+    },
+    repository: event.repository,
+    workContract: event.workContract,
+    sourceIntentRef: event.sourceIntentRef
   };
 }
 function addWorkspaceOperations(operations, sourceNodeId, cwd) {
@@ -3838,7 +3881,7 @@ function buildClaudeCodeHookTraceWriteBundle(trace) {
   const model = trace.model ?? "";
   const modelNodeId = model ? deterministicExecutionId("Model", ["anthropic", model]) : null;
   const executionEngineNodeId = deterministicExecutionId("ExecutionEngine", ["claude-code"]);
-  const sessionProperties = { agent_id: value(trace.agentId), session_id: value(trace.sessionId), claude_session_id: value(trace.claudeSessionId), wallet_address: value(wallet), source: value("claude-code-hooks"), schema_version: value(TRACE_SCHEMA_VERSION), updated_at: value(trace.completedAt), repository: value(trace.repository) };
+  const sessionProperties = { agent_id: value(trace.agentId), session_id: value(trace.sessionId), claude_session_id: value(trace.claudeSessionId), wallet_address: value(wallet), source: value("claude-code-hooks"), schema_version: value(TRACE_SCHEMA_VERSION), updated_at: value(trace.completedAt), repository: value(trace.repository), base_repository: value(trace.baseRepository), result_repository: value(trace.resultRepository), work_contract: value(trace.workContract), source_intent_ref: value(trace.sourceIntentRef) };
   if (trace.filesChanged !== void 0)
     sessionProperties.files_changed = value(trace.filesChanged);
   if (trace.parentSessionId !== void 0)
@@ -3849,7 +3892,7 @@ function buildClaudeCodeHookTraceWriteBundle(trace) {
     { operation: "create_node", id: walletNodeId, label: "WalletTenant", mode: "merge", properties: { wallet_address: value(wallet), schema_version: value(TRACE_SCHEMA_VERSION) } },
     { operation: "create_node", id: agentNodeId, label: "Agent", mode: "merge", properties: { agent_id: value(trace.agentId), schema_version: value(TRACE_SCHEMA_VERSION) } },
     { operation: "create_node", id: sessionNodeId, label: "ClaudeCodeSession", mode: "merge", properties: sessionProperties },
-    { operation: "create_node", id: turnNodeId, label: "ClaudeCodeTurn", mode: "merge", properties: { agent_id: value(trace.agentId), session_id: value(trace.sessionId), claude_session_id: value(trace.claudeSessionId), turn_index: value(trace.turnIndex), model: value(model), provider: value("anthropic"), execution_engine: value("claude-code"), cwd: value(trace.cwd ?? ""), started_at: value(trace.startedAt), completed_at: value(trace.completedAt), event_count: value(trace.events.length), schema_version: value(TRACE_SCHEMA_VERSION), repository: value(trace.repository) } },
+    { operation: "create_node", id: turnNodeId, label: "ClaudeCodeTurn", mode: "merge", properties: { agent_id: value(trace.agentId), session_id: value(trace.sessionId), claude_session_id: value(trace.claudeSessionId), turn_index: value(trace.turnIndex), model: value(model), provider: value("anthropic"), execution_engine: value("claude-code"), cwd: value(trace.cwd ?? ""), started_at: value(trace.startedAt), completed_at: value(trace.completedAt), event_count: value(trace.events.length), schema_version: value(TRACE_SCHEMA_VERSION), repository: value(trace.repository), base_repository: value(trace.baseRepository), result_repository: value(trace.resultRepository), work_contract: value(trace.workContract), source_intent_ref: value(trace.sourceIntentRef) } },
     { operation: "create_edge", id: deterministicExecutionId("OWNS_EXECUTION_SESSION", [walletNodeId, sessionNodeId]), from: walletNodeId, to: sessionNodeId, edge_type: "OWNS_EXECUTION_SESSION", properties: { source: value("claude-code-hooks") } },
     { operation: "create_edge", id: deterministicExecutionId("EXECUTES_AGENT", [sessionNodeId, agentNodeId]), from: sessionNodeId, to: agentNodeId, edge_type: "EXECUTES_AGENT", properties: { agent_id: value(trace.agentId) } },
     { operation: "create_edge", id: deterministicId("HAS_CLAUDE_CODE_TURN", [sessionNodeId, turnNodeId]), from: sessionNodeId, to: turnNodeId, edge_type: "HAS_CLAUDE_CODE_TURN", properties: { turn_index: value(trace.turnIndex) } },
@@ -3928,7 +3971,10 @@ function buildClaudeCodeHookTraceWriteBundle(trace) {
         interface: event.contextDelivery.interface,
         coverageStatus: event.contextDelivery.coverageStatus,
         omissions: event.contextDelivery.omissions,
-        deliveredAt: event.contextDelivery.deliveredAt
+        deliveredAt: event.contextDelivery.deliveredAt,
+        policyHash: event.contextDelivery.policyHash,
+        selectedManifestHash: event.contextDelivery.selectedManifestHash,
+        corpusWatermark: event.contextDelivery.corpusWatermark
       });
       operations.push(...receipt.operations);
     }
@@ -4384,7 +4430,6 @@ function buildTraces(input) {
   const sessionModel = firstDefined([summary?.model, ...events.map((e) => e.model)]);
   const sessionCwd = firstDefined([summary?.cwd, ...events.map((e) => e.cwd)]);
   const sessionInitialPrompt = firstDefined([summary?.initialPrompt, firstUserPromptText(events)]);
-  const repository = events.find((event) => event.repository)?.repository;
   return groups.map((group, index) => {
     const turnModel = firstDefined([...group.map((e) => e.model), sessionModel]);
     const turnCwd = firstDefined([...group.map((e) => e.cwd), sessionCwd]);
@@ -4398,12 +4443,24 @@ function buildTraces(input) {
       cwd: turnCwd,
       startedAt: group[0].receivedAt,
       completedAt: group[group.length - 1].receivedAt,
-      events: group
+      events: group.map((event) => ({
+        ...event,
+        hookPayload: sdkHookPayload(event.hookPayload, event.workProvenance)
+      }))
     };
     if (sessionInitialPrompt !== void 0) trace.initialPrompt = sessionInitialPrompt;
     if (summary?.filesChanged !== void 0) trace.filesChanged = summary.filesChanged;
     if (summary?.parentSessionId !== void 0) trace.parentSessionId = summary.parentSessionId;
-    if (repository !== void 0) trace.repository = repository;
+    const repository = group.find((event) => event.repository)?.repository;
+    if (repository?.fullName !== void 0) trace.repository = repository;
+    const baseRepository = group.find((event) => event.repository?.fullName)?.repository;
+    const resultRepository = [...group].reverse().find((event) => event.repository?.fullName)?.repository;
+    if (baseRepository?.fullName) trace.baseRepository = baseRepository;
+    if (resultRepository?.fullName) trace.resultRepository = resultRepository;
+    const workContract = group.find((event) => event.workContract)?.workContract;
+    const sourceIntentRef = firstDefined(group.map((event) => event.sourceIntentRef));
+    if (workContract) trace.workContract = workContract;
+    if (sourceIntentRef) trace.sourceIntentRef = sourceIntentRef;
     return trace;
   });
 }
@@ -4460,8 +4517,8 @@ function contentArtifactRecord(identity, artifact) {
 function graphBatchRecord(identity, graphOperations) {
   return { spoolVersion: 3, recordType: "graph_batch", ...identity, graphOperations };
 }
-function serializeBoundedSpoolRecord(record) {
-  const serialized = JSON.stringify(record);
+function serializeBoundedSpoolRecord(record2) {
+  const serialized = JSON.stringify(record2);
   const bytes = Buffer.byteLength(serialized, "utf8");
   if (bytes > GATEWAY_SPOOL_MAX_BYTES) {
     throw new Error(`spool record is ${bytes} bytes; gateway maximum is ${GATEWAY_SPOOL_MAX_BYTES}`);
