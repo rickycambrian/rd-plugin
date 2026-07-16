@@ -138,15 +138,17 @@ export function transcriptToEvents(transcriptPath: string): PendingEvent[] {
   const entries = readLines(transcriptPath);
   if (entries.length === 0) return [];
 
-  // Map tool_use_id -> result content from user tool_result entries.
-  const toolResults = new Map<string, unknown>();
+  // Map tool_use_id -> observable result content plus its explicit failure bit.
+  const toolResults = new Map<string, { content: unknown; isError: boolean }>();
   for (const entry of entries) {
     const content = entry.message?.content;
     if (Array.isArray(content)) {
       for (const block of content) {
         if (block && typeof block === 'object' && (block as { type?: string }).type === 'tool_result') {
-          const b = block as { tool_use_id?: string; content?: unknown };
-          if (typeof b.tool_use_id === 'string') toolResults.set(b.tool_use_id, b.content);
+          const b = block as { tool_use_id?: string; content?: unknown; is_error?: boolean };
+          if (typeof b.tool_use_id === 'string') {
+            toolResults.set(b.tool_use_id, { content: b.content, isError: b.is_error === true });
+          }
         }
       }
     }
@@ -157,6 +159,7 @@ export function transcriptToEvents(transcriptPath: string): PendingEvent[] {
   let sequence = 0;
   let lastModel: string | undefined;
   let lastCwd: string | undefined;
+  let lastAssistantMessage: string | undefined;
   let lastTs = Date.now();
 
   const push = (partial: Omit<PendingEvent, 'sequence' | 'claudeSessionId' | 'receivedAt'>): void => {
@@ -177,26 +180,35 @@ export function transcriptToEvents(transcriptPath: string): PendingEvent[] {
       continue;
     }
 
+    if (entry.type === 'assistant') {
+      const assistantText = contentText(entry.message?.content);
+      if (assistantText.trim()) lastAssistantMessage = assistantText;
+    }
+
     if (entry.type === 'assistant' && Array.isArray(entry.message?.content)) {
       for (const block of entry.message.content as unknown[]) {
         if (!block || typeof block !== 'object') continue;
         const b = block as { type?: string; name?: string; id?: string; input?: unknown };
         if (b.type === 'tool_use' && b.name) {
+          const result = b.id ? toolResults.get(b.id) : undefined;
           push({
-            hookEventName: 'PostToolUse',
+            hookEventName: result?.isError ? 'PostToolUseFailure' : 'PostToolUse',
             cwd: lastCwd,
             model: lastModel,
             toolName: b.name,
             toolUseId: b.id,
             toolInput: b.input,
-            toolResponse: b.id ? toolResults.get(b.id) : undefined,
+            toolResponse: result?.content,
           });
         }
       }
     }
   }
 
-  push({ hookEventName: 'Stop', cwd: lastCwd, model: lastModel, reason: 'backfill' });
+  push({
+    hookEventName: 'Stop', cwd: lastCwd, model: lastModel, reason: 'backfill',
+    lastAssistantMessage,
+  });
   return events;
 }
 

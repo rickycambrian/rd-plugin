@@ -6,6 +6,7 @@ import { buildTraces, groupTurns } from '../src/lib/trace.js';
 import { buildGraphOperations, buildGraphWriteBundle, batchOperations, GRAPH_WRITE_TIMEOUT_MS } from '../src/lib/graph.js';
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'transcript-sample.jsonl');
+const FAILURE_FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'transcript-failure.jsonl');
 const WALLET = '0xb3e6fa9620933ba9a6037f4ff890ec5fad0ba113';
 
 function fixtureTraces() {
@@ -89,7 +90,7 @@ describe('buildGraphOperations', () => {
     const traces = fixtureTraces();
     const stop = traces[0]?.events.find((event) => event.hookEventName === 'Stop');
     if (!stop) throw new Error('fixture has no Stop event');
-    stop.lastAssistantMessage = 'Done — corrected the typo in the SQL query.';
+    expect(stop.lastAssistantMessage).toBe('Done — corrected the typo in the SQL query.');
 
     const bundle = buildGraphWriteBundle(WALLET, traces);
     expect(bundle.operations.map((operation) => operation.label)).toContain('SessionArtifactManifest');
@@ -99,6 +100,24 @@ describe('buildGraphOperations', () => {
     );
     expect(inlineContent).toContain('Done — corrected the typo in the SQL query.');
     expect(inlineContent.some((content) => content.includes('rickydata.session_artifact_manifest.v1'))).toBe(true);
+  });
+
+  it('carries historical tool-failure identity into the immutable turn manifest', () => {
+    const events = transcriptToEvents(FAILURE_FIXTURE);
+    const traces = buildTraces({ walletAddress: WALLET, claudeSessionId: 'sess-failure', events });
+    const bundle = buildGraphWriteBundle(WALLET, traces);
+    const manifestContent = bundle.contentArtifacts.flatMap((artifact) =>
+      artifact.value.contractVersion === 'content-artifact/v1'
+        && artifact.value.content.includes('rickydata.session_artifact_manifest.v1')
+        ? [artifact.value.content]
+        : [],
+    );
+    expect(manifestContent).toHaveLength(1);
+    const manifest = JSON.parse(manifestContent[0]!) as { entries: Array<{ eventType: string; role: string }> };
+    expect(manifest.entries).toContainEqual(expect.objectContaining({
+      eventType: 'PostToolUseFailure',
+      role: 'tool-response',
+    }));
   });
 });
 

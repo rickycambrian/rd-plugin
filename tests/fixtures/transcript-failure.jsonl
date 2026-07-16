@@ -1,0 +1,4 @@
+{"type":"user","sessionId":"sess-failure","cwd":"/work/proj","timestamp":"2026-07-16T10:00:00Z","message":{"role":"user","content":"Run the failing command."}}
+{"type":"assistant","sessionId":"sess-failure","cwd":"/work/proj","timestamp":"2026-07-16T10:00:01Z","message":{"role":"assistant","model":"claude-haiku-4-5","content":[{"type":"tool_use","id":"tool-fail","name":"Bash","input":{"command":"exit 1"}}]}}
+{"type":"user","sessionId":"sess-failure","cwd":"/work/proj","timestamp":"2026-07-16T10:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-fail","is_error":true,"content":"command exited with status 1"}]}}
+{"type":"assistant","sessionId":"sess-failure","cwd":"/work/proj","timestamp":"2026-07-16T10:00:03Z","message":{"role":"assistant","model":"claude-haiku-4-5","content":[{"type":"text","text":"The command failed, so I stopped."}]}}

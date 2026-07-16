@@ -1019,7 +1019,9 @@ function transcriptToEvents(transcriptPath) {
       for (const block of content) {
         if (block && typeof block === "object" && block.type === "tool_result") {
           const b = block;
-          if (typeof b.tool_use_id === "string") toolResults.set(b.tool_use_id, b.content);
+          if (typeof b.tool_use_id === "string") {
+            toolResults.set(b.tool_use_id, { content: b.content, isError: b.is_error === true });
+          }
         }
       }
     }
@@ -1029,6 +1031,7 @@ function transcriptToEvents(transcriptPath) {
   let sequence = 0;
   let lastModel;
   let lastCwd;
+  let lastAssistantMessage;
   let lastTs = Date.now();
   const push = (partial) => {
     events.push({ sequence: sequence++, claudeSessionId, receivedAt: lastTs, ...partial });
@@ -1045,25 +1048,36 @@ function transcriptToEvents(transcriptPath) {
       push({ hookEventName: "UserPromptSubmit", cwd: lastCwd, model: lastModel, prompt });
       continue;
     }
+    if (entry.type === "assistant") {
+      const assistantText = contentText(entry.message?.content);
+      if (assistantText.trim()) lastAssistantMessage = assistantText;
+    }
     if (entry.type === "assistant" && Array.isArray(entry.message?.content)) {
       for (const block of entry.message.content) {
         if (!block || typeof block !== "object") continue;
         const b = block;
         if (b.type === "tool_use" && b.name) {
+          const result = b.id ? toolResults.get(b.id) : void 0;
           push({
-            hookEventName: "PostToolUse",
+            hookEventName: result?.isError ? "PostToolUseFailure" : "PostToolUse",
             cwd: lastCwd,
             model: lastModel,
             toolName: b.name,
             toolUseId: b.id,
             toolInput: b.input,
-            toolResponse: b.id ? toolResults.get(b.id) : void 0
+            toolResponse: result?.content
           });
         }
       }
     }
   }
-  push({ hookEventName: "Stop", cwd: lastCwd, model: lastModel, reason: "backfill" });
+  push({
+    hookEventName: "Stop",
+    cwd: lastCwd,
+    model: lastModel,
+    reason: "backfill",
+    lastAssistantMessage
+  });
   return events;
 }
 
