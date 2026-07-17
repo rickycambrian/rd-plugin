@@ -854,7 +854,6 @@ function writeFileAtomic(filePath, body) {
 // src/lib/flush-lock.ts
 import fs4 from "node:fs";
 import path4 from "node:path";
-var FLUSH_LOCK_STALE_MS = 10 * 60 * 1e3;
 function lockPath(dir, sessionId) {
   const safe = sessionId.replace(/[^A-Za-z0-9_.-]/g, "_");
   return path4.join(dir, `${safe}.flush.lock`);
@@ -870,9 +869,7 @@ function pidAlive(pid) {
 function holderIsLive(dir, sessionId) {
   try {
     const body = JSON.parse(fs4.readFileSync(lockPath(dir, sessionId), "utf8"));
-    const fresh = typeof body.startedAt === "number" && Date.now() - body.startedAt < FLUSH_LOCK_STALE_MS;
-    const alive = typeof body.pid === "number" && body.pid > 0 && pidAlive(body.pid);
-    return fresh && alive;
+    return typeof body.pid === "number" && body.pid > 0 && pidAlive(body.pid);
   } catch {
     return false;
   }

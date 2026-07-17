@@ -3184,9 +3184,6 @@ import { spawn } from "node:child_process";
 import fs4 from "node:fs";
 import path5 from "node:path";
 
-// src/lib/flush-lock.ts
-var FLUSH_LOCK_STALE_MS = 10 * 60 * 1e3;
-
 // src/lib/state.ts
 function readState() {
   const state = readJsonFile(STATE_FILE, { flushed: {} });

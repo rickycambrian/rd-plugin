@@ -852,7 +852,6 @@ function writeFileAtomic(filePath, body) {
 // src/lib/flush-lock.ts
 import fs4 from "node:fs";
 import path4 from "node:path";
-var FLUSH_LOCK_STALE_MS = 10 * 60 * 1e3;
 function lockPath(dir, sessionId) {
   const safe = sessionId.replace(/[^A-Za-z0-9_.-]/g, "_");
   return path4.join(dir, `${safe}.flush.lock`);
@@ -868,9 +867,7 @@ function pidAlive(pid) {
 function holderIsLive(dir, sessionId) {
   try {
     const body = JSON.parse(fs4.readFileSync(lockPath(dir, sessionId), "utf8"));
-    const fresh = typeof body.startedAt === "number" && Date.now() - body.startedAt < FLUSH_LOCK_STALE_MS;
-    const alive = typeof body.pid === "number" && body.pid > 0 && pidAlive(body.pid);
-    return fresh && alive;
+    return typeof body.pid === "number" && body.pid > 0 && pidAlive(body.pid);
   } catch {
     return false;
   }
@@ -4969,6 +4966,16 @@ function codexFingerprint(codexSessionId, sink, events) {
   const shape = events.map((e) => `${e.sequence}:${e.hookEventName}:${e.toolUseId ?? ""}`).join("|");
   return sha256Hex(`codex ${codexSessionId} ${sink} ${events.length} ${shape}`);
 }
+function recoverCodexMaxSequence(codexSessionId, sink, events, priorFingerprint) {
+  if (!priorFingerprint) return void 0;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (events[index].hookEventName !== "Stop") continue;
+    if (codexFingerprint(codexSessionId, sink, events.slice(0, index + 1)) === priorFingerprint) {
+      return events[index].sequence;
+    }
+  }
+  return void 0;
+}
 async function runCodexFlush(codexSessionId, opts, env = process.env) {
   const config = loadConfig();
   setLogLevel(config.log_level);
@@ -4999,10 +5006,14 @@ async function runCodexFlush(codexSessionId, opts, env = process.env) {
       log("debug", "codex flush skipped: unchanged fingerprint", { sessionId: codexSessionId });
       return;
     }
+    const afterSequence = prior.codexMaxSequence ?? recoverCodexMaxSequence(codexSessionId, sink, events, prior.fingerprint);
+    if (afterSequence !== void 0 && prior.codexMaxSequence === void 0) {
+      log("info", "codex legacy sequence checkpoint recovered", { sessionId: codexSessionId, afterSequence });
+    }
     if (sink === "gateway") {
-      flushCodexGateway(codexSessionId, events, prior.codexMaxSequence, env);
+      flushCodexGateway(codexSessionId, events, afterSequence, env);
     } else {
-      await flushCodexDirect(config, codexSessionId, events, prior.codexMaxSequence);
+      await flushCodexDirect(config, codexSessionId, events, afterSequence);
     }
     setFlushedEntry(state, codexSessionId, { fingerprint, codexMaxSequence: maxSequence });
     await commitFlushedEntry(codexSessionId, flushedEntry(state, codexSessionId));

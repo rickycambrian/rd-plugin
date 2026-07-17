@@ -37,10 +37,11 @@ describe('acquireFlushLock', () => {
     expect(acquireFlushLock(dir, 'sess-b')).toBe(true);
   });
 
-  it('takes over a stale lock (old startedAt)', () => {
+  it('does not take over an old lock while its holder is still alive', () => {
     fs.writeFileSync(lockFile('sess-a'), JSON.stringify({ pid: process.pid, startedAt: Date.now() - 11 * 60 * 1000 }));
-    expect(acquireFlushLock(dir, 'sess-a')).toBe(true);
+    expect(acquireFlushLock(dir, 'sess-a')).toBe(false);
     const body = JSON.parse(fs.readFileSync(lockFile('sess-a'), 'utf8'));
+    expect(body.startedAt).toBeLessThan(Date.now() - 10 * 60 * 1000);
     expect(body.pid).toBe(process.pid);
   });
 

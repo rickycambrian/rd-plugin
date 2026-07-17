@@ -17,9 +17,26 @@ import { writeCodexDirectUnit, writeCodexGatewayUnit } from './writer.js';
  * log, changes the moment a new event arrives. Drives idempotency so a repeated
  * Stop flush with an identical event set is a no-op.
  */
-function codexFingerprint(codexSessionId: string, sink: string, events: CodexPendingEvent[]): string {
+export function codexFingerprint(codexSessionId: string, sink: string, events: CodexPendingEvent[]): string {
   const shape = events.map((e) => `${e.sequence}:${e.hookEventName}:${e.toolUseId ?? ''}`).join('|');
   return sha256Hex(`codex ${codexSessionId} ${sink} ${events.length} ${shape}`);
+}
+
+/** Recover the sequence covered by pre-checkpoint state without guessing. */
+export function recoverCodexMaxSequence(
+  codexSessionId: string,
+  sink: string,
+  events: CodexPendingEvent[],
+  priorFingerprint: string | undefined,
+): number | undefined {
+  if (!priorFingerprint) return undefined;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (events[index].hookEventName !== 'Stop') continue;
+    if (codexFingerprint(codexSessionId, sink, events.slice(0, index + 1)) === priorFingerprint) {
+      return events[index].sequence;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -69,11 +86,16 @@ export async function runCodexFlush(
       log('debug', 'codex flush skipped: unchanged fingerprint', { sessionId: codexSessionId });
       return;
     }
+    const afterSequence = prior.codexMaxSequence
+      ?? recoverCodexMaxSequence(codexSessionId, sink, events, prior.fingerprint);
+    if (afterSequence !== undefined && prior.codexMaxSequence === undefined) {
+      log('info', 'codex legacy sequence checkpoint recovered', { sessionId: codexSessionId, afterSequence });
+    }
 
     if (sink === 'gateway') {
-      flushCodexGateway(codexSessionId, events, prior.codexMaxSequence, env);
+      flushCodexGateway(codexSessionId, events, afterSequence, env);
     } else {
-      await flushCodexDirect(config, codexSessionId, events, prior.codexMaxSequence);
+      await flushCodexDirect(config, codexSessionId, events, afterSequence);
     }
 
     setFlushedEntry(state, codexSessionId, { fingerprint, codexMaxSequence: maxSequence });

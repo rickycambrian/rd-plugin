@@ -12,6 +12,7 @@ import { loadCodexRepoOwners, RD_CODEX_AGENT_ID } from '../src/codex/config.js';
 import { parseGitHubRemote, ownedRepository } from '../src/codex/repo.js';
 import { runCodexCapture } from '../src/codex/capture-core.js';
 import { readCodexPending } from '../src/codex/pending.js';
+import { codexFingerprint, recoverCodexMaxSequence } from '../src/codex/flush-core.js';
 import type { CodexPendingEvent } from '../src/codex/event.js';
 import type { HookInput } from '../src/lib/hook-input.js';
 
@@ -48,6 +49,13 @@ function traces(codexSessionId = 'cx-session-1') {
 }
 
 describe('codex trace grouping', () => {
+  it('recovers a legacy checkpoint only from an exact Stop-delimited fingerprint', () => {
+    const events = codexEvents();
+    const priorFingerprint = codexFingerprint('cx-session-1', 'direct', events.slice(0, 3));
+    expect(recoverCodexMaxSequence('cx-session-1', 'direct', events, priorFingerprint)).toBe(2);
+    expect(recoverCodexMaxSequence('cx-session-1', 'direct', events, 'not-a-match')).toBeUndefined();
+  });
+
   it('groups events into one turn per turnId', () => {
     const groups = groupTurns(codexEvents());
     expect(groups.map((g) => g.turnId)).toEqual(['t1', 't2']);

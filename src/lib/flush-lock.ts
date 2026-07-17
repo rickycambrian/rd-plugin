@@ -12,9 +12,6 @@ import path from 'node:path';
  * waits for the holder and then proceeds regardless.
  */
 
-/** A holder older than this is presumed hung; the lock can be taken over. */
-const FLUSH_LOCK_STALE_MS = 10 * 60 * 1000;
-
 interface FlushLockBody {
   pid?: number;
   startedAt?: number;
@@ -39,9 +36,7 @@ function pidAlive(pid: number): boolean {
 function holderIsLive(dir: string, sessionId: string): boolean {
   try {
     const body = JSON.parse(fs.readFileSync(lockPath(dir, sessionId), 'utf8')) as FlushLockBody;
-    const fresh = typeof body.startedAt === 'number' && Date.now() - body.startedAt < FLUSH_LOCK_STALE_MS;
-    const alive = typeof body.pid === 'number' && body.pid > 0 && pidAlive(body.pid);
-    return fresh && alive;
+    return typeof body.pid === 'number' && body.pid > 0 && pidAlive(body.pid);
   } catch {
     return false; // missing/unreadable → not a live holder
   }
@@ -49,7 +44,9 @@ function holderIsLive(dir: string, sessionId: string): boolean {
 
 /**
  * Try to become the single flusher for a session. Returns true when acquired
- * (including takeover of a stale/dead holder). Fail-open: on unexpected fs
+ * (including takeover of a dead holder). A slow live holder keeps ownership;
+ * replacing it only multiplies writes against an already-slow backend.
+ * Fail-open: on unexpected fs
  * errors it returns true — flushing twice is safer than never flushing.
  */
 export function acquireFlushLock(dir: string, sessionId: string): boolean {
