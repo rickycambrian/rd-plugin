@@ -4427,13 +4427,14 @@ function classifySessionKind(initialPrompt, entrypoint) {
   const automated = initialPrompt !== void 0 && (/^you are\b/i.test(initialPrompt) || initialPrompt.length >= 3900);
   return { session_kind: automated ? "automated" : "interactive", session_kind_source: "heuristic-v2" };
 }
-function buildSessionKindOp(sessionNodeId, initialPrompt, entrypoint) {
+function buildSessionKindOp(sessionNodeId, initialPrompt, entrypoint, branch) {
   const kind = classifySessionKind(initialPrompt, entrypoint);
   const properties = {
     session_kind: str2(kind.session_kind),
     session_kind_source: str2(kind.session_kind_source)
   };
   if (entrypoint) properties.entrypoint = str2(entrypoint);
+  if (branch) properties.branch = str2(branch);
   return { operation: "create_node", id: sessionNodeId, label: "ClaudeCodeSession", mode: "merge", properties };
 }
 function batchOperations(operations) {
@@ -5344,7 +5345,7 @@ async function writeDirectUnit(input) {
     const branch = events.map((e) => e.repository?.branch).find((b) => Boolean(b));
     const factsOp = buildSessionIssueRefsOp(sessionNodeId, { ...facts, branch });
     if (factsOp) operations.push(factsOp);
-    operations.push(buildSessionKindOp(sessionNodeId, traces[0].initialPrompt, process.env.CLAUDE_CODE_ENTRYPOINT));
+    operations.push(buildSessionKindOp(sessionNodeId, traces[0].initialPrompt, process.env.CLAUDE_CODE_ENTRYPOINT, branch));
   }
   const writeUrl = `${config.api_url.replace(/\/$/, "")}/api/v1/write`;
   const artifactResult = await writeContentArtifacts(config, auth, bundle.contentArtifacts);

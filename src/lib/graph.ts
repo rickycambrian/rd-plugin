@@ -138,6 +138,7 @@ export function buildSessionKindOp(
   sessionNodeId: string,
   initialPrompt: string | undefined,
   entrypoint: string | undefined,
+  branch?: string,
 ): GraphOp {
   const kind = classifySessionKind(initialPrompt, entrypoint);
   const properties: Record<string, KfdbValue> = {
@@ -145,6 +146,10 @@ export function buildSessionKindOp(
     session_kind_source: str(kind.session_kind_source),
   };
   if (entrypoint) properties.entrypoint = str(entrypoint);
+  // branch previously only landed via the issue-refs op (skipped when no refs
+  // were detected), leaving most sessions — including every plan-bearing one —
+  // with no branch fact. This op always fires, so it carries branch too.
+  if (branch) properties.branch = str(branch);
   return { operation: 'create_node', id: sessionNodeId, label: 'ClaudeCodeSession', mode: 'merge', properties };
 }
 

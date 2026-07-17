@@ -69,7 +69,7 @@ export async function writeDirectUnit(input: DirectUnitInput): Promise<DirectUni
     const branch = events.map((e) => e.repository?.branch).find((b): b is string => Boolean(b));
     const factsOp = buildSessionIssueRefsOp(sessionNodeId, { ...facts, branch });
     if (factsOp) operations.push(factsOp);
-    operations.push(buildSessionKindOp(sessionNodeId, traces[0].initialPrompt, process.env.CLAUDE_CODE_ENTRYPOINT));
+    operations.push(buildSessionKindOp(sessionNodeId, traces[0].initialPrompt, process.env.CLAUDE_CODE_ENTRYPOINT, branch));
   }
   const writeUrl = `${config.api_url.replace(/\/$/, '')}/api/v1/write`;
 

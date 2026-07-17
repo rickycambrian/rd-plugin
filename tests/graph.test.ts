@@ -161,3 +161,12 @@ describe('classifySessionKind / buildSessionKindOp', () => {
     expect((buildSessionKindOp('node-2', 'hello', undefined).properties as Record<string, unknown>).entrypoint).toBeUndefined();
   });
 });
+
+describe('buildSessionKindOp branch fact', () => {
+  it('carries branch when known, omits it otherwise', () => {
+    const props = buildSessionKindOp('n1', 'hi', undefined, 'feat/x').properties as Record<string, unknown>;
+    expect(props.branch).toEqual({ String: 'feat/x' });
+    const bare = buildSessionKindOp('n1', 'hi', undefined).properties as Record<string, unknown>;
+    expect(bare.branch).toBeUndefined();
+  });
+});
