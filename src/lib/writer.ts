@@ -4,7 +4,7 @@ import type { TranscriptSummary } from './transcript.js';
 import { kfdbAuthHeaders, type KfdbAuth } from './kfdb-auth.js';
 import { claudeCodeSessionNodeId } from 'rickydata/kfdb';
 import { buildTraces } from './trace.js';
-import { buildGraphWriteBundle, batchOperations, GRAPH_WRITE_TIMEOUT_MS, buildSessionIssueRefsOp } from './graph.js';
+import { buildGraphWriteBundle, batchOperations, GRAPH_WRITE_TIMEOUT_MS, buildSessionIssueRefsOp, buildSessionKindOp } from './graph.js';
 import { sessionIssueRefs } from './issue-refs.js';
 import { buildPlanOperations } from './plan.js';
 import { collectEmbedTargets, embedTargets } from './embed.js';
@@ -69,6 +69,7 @@ export async function writeDirectUnit(input: DirectUnitInput): Promise<DirectUni
     const branch = events.map((e) => e.repository?.branch).find((b): b is string => Boolean(b));
     const factsOp = buildSessionIssueRefsOp(sessionNodeId, { ...facts, branch });
     if (factsOp) operations.push(factsOp);
+    operations.push(buildSessionKindOp(sessionNodeId, traces[0].initialPrompt, process.env.CLAUDE_CODE_ENTRYPOINT));
   }
   const writeUrl = `${config.api_url.replace(/\/$/, '')}/api/v1/write`;
 

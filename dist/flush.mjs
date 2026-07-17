@@ -4420,6 +4420,22 @@ function buildSessionIssueRefsOp(sessionNodeId, facts) {
   if (facts.branch) properties.branch = str2(facts.branch);
   return { operation: "create_node", id: sessionNodeId, label: "ClaudeCodeSession", mode: "merge", properties };
 }
+function classifySessionKind(initialPrompt, entrypoint) {
+  if (entrypoint) {
+    return { session_kind: entrypoint === "cli" ? "interactive" : "automated", session_kind_source: "entrypoint" };
+  }
+  const automated = initialPrompt !== void 0 && (/^you are (a|an|the)\b/i.test(initialPrompt) || initialPrompt.length >= 3900);
+  return { session_kind: automated ? "automated" : "interactive", session_kind_source: "heuristic-v1" };
+}
+function buildSessionKindOp(sessionNodeId, initialPrompt, entrypoint) {
+  const kind = classifySessionKind(initialPrompt, entrypoint);
+  const properties = {
+    session_kind: str2(kind.session_kind),
+    session_kind_source: str2(kind.session_kind_source)
+  };
+  if (entrypoint) properties.entrypoint = str2(entrypoint);
+  return { operation: "create_node", id: sessionNodeId, label: "ClaudeCodeSession", mode: "merge", properties };
+}
 function batchOperations(operations) {
   const batches = [];
   for (let offset = 0; offset < operations.length; offset += BATCH_SIZE) {
@@ -5328,6 +5344,7 @@ async function writeDirectUnit(input) {
     const branch = events.map((e) => e.repository?.branch).find((b) => Boolean(b));
     const factsOp = buildSessionIssueRefsOp(sessionNodeId, { ...facts, branch });
     if (factsOp) operations.push(factsOp);
+    operations.push(buildSessionKindOp(sessionNodeId, traces[0].initialPrompt, process.env.CLAUDE_CODE_ENTRYPOINT));
   }
   const writeUrl = `${config.api_url.replace(/\/$/, "")}/api/v1/write`;
   const artifactResult = await writeContentArtifacts(config, auth, bundle.contentArtifacts);

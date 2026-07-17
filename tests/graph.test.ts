@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { transcriptToEvents, parseTranscriptSummary } from '../src/lib/transcript.js';
 import { buildTraces, groupTurns } from '../src/lib/trace.js';
-import { buildGraphOperations, buildGraphWriteBundle, batchOperations, GRAPH_WRITE_TIMEOUT_MS } from '../src/lib/graph.js';
+import { buildGraphOperations, buildGraphWriteBundle, batchOperations, GRAPH_WRITE_TIMEOUT_MS, classifySessionKind, buildSessionKindOp } from '../src/lib/graph.js';
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'transcript-sample.jsonl');
 const FAILURE_FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'transcript-failure.jsonl');
@@ -139,5 +139,24 @@ describe('GRAPH_WRITE_TIMEOUT_MS', () => {
     // client timeout aborts writes the server completes. The queue drain also
     // replays at this value so it is never shorter than the writer that queued.
     expect(GRAPH_WRITE_TIMEOUT_MS).toBe(60000);
+  });
+});
+
+describe('classifySessionKind / buildSessionKindOp', () => {
+  it('entrypoint wins: cli is interactive, anything else automated', () => {
+    expect(classifySessionKind('You are a grading agent…', 'cli')).toEqual({ session_kind: 'interactive', session_kind_source: 'entrypoint' });
+    expect(classifySessionKind('fix the bug', 'sdk-ts')).toEqual({ session_kind: 'automated', session_kind_source: 'entrypoint' });
+  });
+  it('heuristic-v1: templated "You are …" or cap-length prompts are automated', () => {
+    expect(classifySessionKind('You are a knowledge-extraction agent. Do X.', undefined).session_kind).toBe('automated');
+    expect(classifySessionKind('x'.repeat(4000), undefined).session_kind).toBe('automated');
+    expect(classifySessionKind('please fix the flaky test in ci', undefined)).toEqual({ session_kind: 'interactive', session_kind_source: 'heuristic-v1' });
+    expect(classifySessionKind(undefined, undefined).session_kind).toBe('interactive');
+  });
+  it('op merges onto the session node and stores entrypoint only when present', () => {
+    const op = buildSessionKindOp('node-1', 'hello', 'cli');
+    expect(op).toMatchObject({ operation: 'create_node', id: 'node-1', label: 'ClaudeCodeSession', mode: 'merge' });
+    expect(op.properties).toEqual({ session_kind: { String: 'interactive' }, session_kind_source: { String: 'entrypoint' }, entrypoint: { String: 'cli' } });
+    expect((buildSessionKindOp('node-2', 'hello', undefined).properties as Record<string, unknown>).entrypoint).toBeUndefined();
   });
 });

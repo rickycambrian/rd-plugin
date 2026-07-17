@@ -109,6 +109,44 @@ export function buildSessionIssueRefsOp(
   return { operation: 'create_node', id: sessionNodeId, label: 'ClaudeCodeSession', mode: 'merge', properties };
 }
 
+/**
+ * Session-origin facts merge-op: was this session a human at a terminal or an
+ * automated harness? No captured property discriminates today (agent_id,
+ * source, work_contract are uniform across the whole corpus), so retrieval
+ * over ClaudeCodeSession drowns human sessions in templated benchmark ones.
+ * Precedence: CLAUDE_CODE_ENTRYPOINT env when the hook process sees it
+ * ('cli' = interactive, anything else = automated), else a prompt-shape
+ * heuristic. session_kind_source records which rule fired so the tag is
+ * revisable; entrypoint is stored verbatim as its own fact when present.
+ */
+export function classifySessionKind(
+  initialPrompt: string | undefined,
+  entrypoint: string | undefined,
+): { session_kind: 'interactive' | 'automated'; session_kind_source: string } {
+  if (entrypoint) {
+    return { session_kind: entrypoint === 'cli' ? 'interactive' : 'automated', session_kind_source: 'entrypoint' };
+  }
+  // ponytail: heuristic-v1 — templated agent prompts start "You are a/an/the …"
+  // or hit the upstream 4000-char initial_prompt cap; widen only if mistags show up.
+  const automated = initialPrompt !== undefined &&
+    (/^you are (a|an|the)\b/i.test(initialPrompt) || initialPrompt.length >= 3900);
+  return { session_kind: automated ? 'automated' : 'interactive', session_kind_source: 'heuristic-v1' };
+}
+
+export function buildSessionKindOp(
+  sessionNodeId: string,
+  initialPrompt: string | undefined,
+  entrypoint: string | undefined,
+): GraphOp {
+  const kind = classifySessionKind(initialPrompt, entrypoint);
+  const properties: Record<string, KfdbValue> = {
+    session_kind: str(kind.session_kind),
+    session_kind_source: str(kind.session_kind_source),
+  };
+  if (entrypoint) properties.entrypoint = str(entrypoint);
+  return { operation: 'create_node', id: sessionNodeId, label: 'ClaudeCodeSession', mode: 'merge', properties };
+}
+
 export function batchOperations(operations: GraphOp[]): GraphOp[][] {
   const batches: GraphOp[][] = [];
   for (let offset = 0; offset < operations.length; offset += BATCH_SIZE) {
