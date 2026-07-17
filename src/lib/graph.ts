@@ -126,11 +126,12 @@ export function classifySessionKind(
   if (entrypoint) {
     return { session_kind: entrypoint === 'cli' ? 'interactive' : 'automated', session_kind_source: 'entrypoint' };
   }
-  // ponytail: heuristic-v1 — templated agent prompts start "You are a/an/the …"
-  // or hit the upstream 4000-char initial_prompt cap; widen only if mistags show up.
+  // ponytail: heuristic-v2 — templated agent prompts start "You are …" (live
+  // corpus: "You are a…", "You are solving…", "You are independently…") or hit
+  // the upstream 4000-char initial_prompt cap; widen only if mistags show up.
   const automated = initialPrompt !== undefined &&
-    (/^you are (a|an|the)\b/i.test(initialPrompt) || initialPrompt.length >= 3900);
-  return { session_kind: automated ? 'automated' : 'interactive', session_kind_source: 'heuristic-v1' };
+    (/^you are\b/i.test(initialPrompt) || initialPrompt.length >= 3900);
+  return { session_kind: automated ? 'automated' : 'interactive', session_kind_source: 'heuristic-v2' };
 }
 
 export function buildSessionKindOp(

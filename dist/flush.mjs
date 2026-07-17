@@ -4424,8 +4424,8 @@ function classifySessionKind(initialPrompt, entrypoint) {
   if (entrypoint) {
     return { session_kind: entrypoint === "cli" ? "interactive" : "automated", session_kind_source: "entrypoint" };
   }
-  const automated = initialPrompt !== void 0 && (/^you are (a|an|the)\b/i.test(initialPrompt) || initialPrompt.length >= 3900);
-  return { session_kind: automated ? "automated" : "interactive", session_kind_source: "heuristic-v1" };
+  const automated = initialPrompt !== void 0 && (/^you are\b/i.test(initialPrompt) || initialPrompt.length >= 3900);
+  return { session_kind: automated ? "automated" : "interactive", session_kind_source: "heuristic-v2" };
 }
 function buildSessionKindOp(sessionNodeId, initialPrompt, entrypoint) {
   const kind = classifySessionKind(initialPrompt, entrypoint);

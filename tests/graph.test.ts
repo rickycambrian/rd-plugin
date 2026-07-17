@@ -149,8 +149,9 @@ describe('classifySessionKind / buildSessionKindOp', () => {
   });
   it('heuristic-v1: templated "You are …" or cap-length prompts are automated', () => {
     expect(classifySessionKind('You are a knowledge-extraction agent. Do X.', undefined).session_kind).toBe('automated');
+    expect(classifySessionKind('You are independently fact-checking a claim.', undefined).session_kind).toBe('automated');
     expect(classifySessionKind('x'.repeat(4000), undefined).session_kind).toBe('automated');
-    expect(classifySessionKind('please fix the flaky test in ci', undefined)).toEqual({ session_kind: 'interactive', session_kind_source: 'heuristic-v1' });
+    expect(classifySessionKind('please fix the flaky test in ci', undefined)).toEqual({ session_kind: 'interactive', session_kind_source: 'heuristic-v2' });
     expect(classifySessionKind(undefined, undefined).session_kind).toBe('interactive');
   });
   it('op merges onto the session node and stores entrypoint only when present', () => {
