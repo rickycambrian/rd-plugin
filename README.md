@@ -42,6 +42,15 @@ The injected block carries a reproducibility hash. If Home
 is unavailable, the plugin labels its smaller answer-sheet fallback
 `INCOMPLETE`; it never presents fallback context as complete.
 
+## Execution modes
+
+rd-plugin observes both execution modes; it does not choose where an agent runs.
+
+- **Remote TEE:** rickydata_home sends the workflow to Agent Gateway. Processes and tools run in the TEE, and repository work uses a Git checkout/worktree inside that environment. It cannot see unpushed files on your machine.
+- **Local:** rickydata_home sends the workflow to a local `rickydata_code` app server. Processes, filesystem tools, and Git operate against the local workspace; provider, model, and execution engine setup belongs to `rickydata_code`.
+
+The SDK command `rickydata agents use` is a separate hybrid: Claude Code and its filesystem/Git access run locally, while model requests and RickyData agent tools use Gateway services. See the [execution-modes skill](skills/execution-modes/SKILL.md) for the verified setup and decision guide.
+
 ## How it works
 
 rd-plugin captures in two stages so it never slows you down:
