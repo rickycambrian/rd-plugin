@@ -2,8 +2,10 @@ import type { RdConfig } from './config.js';
 import type { PendingEvent } from './event.js';
 import type { TranscriptSummary } from './transcript.js';
 import { kfdbAuthHeaders, type KfdbAuth } from './kfdb-auth.js';
+import { claudeCodeSessionNodeId } from 'rickydata/kfdb';
 import { buildTraces } from './trace.js';
 import { buildGraphWriteBundle, batchOperations, GRAPH_WRITE_TIMEOUT_MS } from './graph.js';
+import { buildPlanOperations } from './plan.js';
 import { writeContentArtifacts } from './artifacts.js';
 import { writeSpool } from './spool.js';
 import { writeLegacyStream } from './legacy-stream.js';
@@ -51,6 +53,9 @@ export async function writeDirectUnit(input: DirectUnitInput): Promise<DirectUni
   const traces = buildTraces({ walletAddress, claudeSessionId, events, summary });
   const bundle = buildGraphWriteBundle(walletAddress, traces);
   const operations = bundle.operations;
+  if (summary?.plans?.length && traces.length > 0) {
+    operations.push(...buildPlanOperations(summary.plans, claudeCodeSessionNodeId(traces[0])));
+  }
   const writeUrl = `${config.api_url.replace(/\/$/, '')}/api/v1/write`;
 
   const artifactResult = await writeContentArtifacts(config, auth, bundle.contentArtifacts);

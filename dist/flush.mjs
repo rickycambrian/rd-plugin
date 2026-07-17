@@ -109,10 +109,10 @@ function hexToBytes(hex) {
   }
   return array;
 }
-function utf8ToBytes(str2) {
-  if (typeof str2 !== "string")
+function utf8ToBytes(str3) {
+  if (typeof str3 !== "string")
     throw new Error("string expected");
-  return new Uint8Array(new TextEncoder().encode(str2));
+  return new Uint8Array(new TextEncoder().encode(str3));
 }
 function toBytes(data) {
   if (typeof data === "string")
@@ -1031,6 +1031,7 @@ import fs6 from "node:fs";
 import os2 from "node:os";
 import path5 from "node:path";
 var FILE_EDIT_TOOLS = /* @__PURE__ */ new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+var PLAN_FILE_RE = /[\\/]\.claude[\\/]plans[\\/][^\\/]+\.md$/;
 function readLines(transcriptPath) {
   let raw;
   try {
@@ -1072,10 +1073,41 @@ function parseTranscriptSummary(transcriptPath) {
   const summary = { messageCount: 0, filesChanged: 0 };
   const changedFiles = /* @__PURE__ */ new Set();
   const seenUuids = /* @__PURE__ */ new Set();
+  const plansByPath = /* @__PURE__ */ new Map();
+  let pathlessPlan;
+  let currentPlanPath;
+  let lastTs;
+  const planForPath = (planFilePath) => {
+    let plan = plansByPath.get(planFilePath);
+    if (!plan) {
+      plan = { planFilePath };
+      plansByPath.set(planFilePath, plan);
+      if (pathlessPlan?.content && !plan.content) {
+        plan.content = pathlessPlan.content;
+        plan.updatedAt = pathlessPlan.updatedAt;
+        pathlessPlan = void 0;
+      }
+    }
+    currentPlanPath = planFilePath;
+    return plan;
+  };
+  const recordPlanContent = (content) => {
+    const target = currentPlanPath ? planForPath(currentPlanPath) : pathlessPlan ??= {};
+    target.content = content;
+    target.updatedAt = lastTs;
+  };
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     if (!summary.claudeSessionId && typeof entry.sessionId === "string") summary.claudeSessionId = entry.sessionId;
     if (!summary.cwd && typeof entry.cwd === "string") summary.cwd = entry.cwd;
+    if (typeof entry.timestamp === "string") {
+      const t = Date.parse(entry.timestamp);
+      if (!Number.isNaN(t)) lastTs = t;
+    }
+    if (entry.type === "attachment" && entry.attachment?.type === "plan_mode" && typeof entry.attachment.planFilePath === "string") {
+      const plan = planForPath(entry.attachment.planFilePath);
+      if (plan.updatedAt === void 0) plan.updatedAt = lastTs;
+    }
     if (summary.parentSessionId === void 0 && i < 40) {
       if (typeof entry.parentSessionId === "string") summary.parentSessionId = entry.parentSessionId;
       else if (typeof entry.parentUuid === "string" && !seenUuids.has(entry.parentUuid)) summary.parentSessionId = entry.parentUuid;
@@ -1093,15 +1125,27 @@ function parseTranscriptSummary(transcriptPath) {
         for (const block of content) {
           if (!block || typeof block !== "object") continue;
           const b = block;
-          if (b.type === "tool_use" && b.name && FILE_EDIT_TOOLS.has(b.name)) {
+          if (b.type !== "tool_use" || !b.name) continue;
+          if (FILE_EDIT_TOOLS.has(b.name)) {
             const fp = b.input?.file_path ?? b.input?.path;
-            if (typeof fp === "string" && fp) changedFiles.add(fp);
+            if (typeof fp === "string" && fp) {
+              changedFiles.add(fp);
+              if (PLAN_FILE_RE.test(fp)) {
+                const plan = planForPath(fp);
+                plan.updatedAt = lastTs;
+                if (b.name === "Write" && typeof b.input?.content === "string") plan.content = b.input.content;
+              }
+            }
+          } else if (b.name === "ExitPlanMode" && typeof b.input?.plan === "string" && b.input.plan.trim()) {
+            recordPlanContent(b.input.plan);
           }
         }
       }
     }
   }
   summary.filesChanged = changedFiles.size;
+  const plans = [...plansByPath.values(), ...pathlessPlan?.content ? [pathlessPlan] : []];
+  if (plans.length > 0) summary.plans = plans;
   return summary;
 }
 function findTranscriptForSession(claudeSessionId) {
@@ -2037,7 +2081,7 @@ var DER = {
     }
   },
   toSig(hex) {
-    const { Err: E, _int: int, _tlv: tlv } = DER;
+    const { Err: E, _int: int2, _tlv: tlv } = DER;
     const data = ensureBytes("signature", hex);
     const { v: seqBytes, l: seqLeftBytes } = tlv.decode(48, data);
     if (seqLeftBytes.length)
@@ -2046,12 +2090,12 @@ var DER = {
     const { v: sBytes, l: sLeftBytes } = tlv.decode(2, rLeftBytes);
     if (sLeftBytes.length)
       throw new E("invalid signature: left bytes after parsing");
-    return { r: int.decode(rBytes), s: int.decode(sBytes) };
+    return { r: int2.decode(rBytes), s: int2.decode(sBytes) };
   },
   hexFromSig(sig) {
-    const { _tlv: tlv, _int: int } = DER;
-    const rs = tlv.encode(2, int.encode(sig.r));
-    const ss = tlv.encode(2, int.encode(sig.s));
+    const { _tlv: tlv, _int: int2 } = DER;
+    const rs = tlv.encode(2, int2.encode(sig.r));
+    const ss = tlv.encode(2, int2.encode(sig.s));
     const seq = rs + ss;
     return tlv.encode(48, seq);
   }
@@ -4691,6 +4735,103 @@ function buildTraces(input) {
   });
 }
 
+// src/lib/plan.ts
+import { createHash as createHash9 } from "node:crypto";
+var TRACE_SCHEMA_VERSION3 = 3;
+function uuidV57(name, namespace) {
+  const ns = Buffer.from(namespace.replace(/-/g, ""), "hex");
+  const hash = createHash9("sha1").update(Buffer.concat([ns, Buffer.from(name)])).digest();
+  hash[6] = hash[6] & 15 | 80;
+  hash[8] = hash[8] & 63 | 128;
+  const hex = hash.subarray(0, 16).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+var UUID_SEED = "6ba7b811-9dad-11d1-80b4-00c04fd430c8";
+var KG_NAMESPACE5 = uuidV57("rickydata-claude-code-hook-knowledge-graph-v1", UUID_SEED);
+var EXECUTION_KG_NAMESPACE6 = uuidV57("rickydata-execution-knowledge-graph-v1", UUID_SEED);
+function deterministicId2(kind, parts) {
+  return uuidV57(`${kind}:${parts.map((p) => String(p)).join(":")}`, KG_NAMESPACE5);
+}
+function deterministicExecutionId3(kind, parts) {
+  return uuidV57(`${kind}:${parts.map((p) => String(p)).join(":")}`, EXECUTION_KG_NAMESPACE6);
+}
+function stableHash2(input) {
+  return createHash9("sha256").update(input).digest("hex");
+}
+function basename2(input) {
+  const normalized = input.replace(/\\/g, "/");
+  return normalized.split("/").filter(Boolean).pop() ?? normalized;
+}
+function str2(v) {
+  return { String: v };
+}
+function int(v) {
+  return { Integer: v };
+}
+function planNodeId(plan) {
+  return plan.planFilePath ? deterministicExecutionId3("Plan", [plan.planFilePath]) : deterministicExecutionId3("Plan", ["content", stableHash2(plan.content ?? "")]);
+}
+function buildPlanOperations(plans, sessionNodeId) {
+  const operations = [];
+  for (const plan of plans) {
+    if (!plan.planFilePath && !plan.content) continue;
+    const nodeId = planNodeId(plan);
+    const properties = {
+      source: str2("claude-code-plan-mode"),
+      schema_version: int(TRACE_SCHEMA_VERSION3)
+    };
+    if (plan.planFilePath) {
+      properties.path = str2(plan.planFilePath);
+      properties.path_hash = str2(stableHash2(plan.planFilePath));
+      properties.slug = str2(basename2(plan.planFilePath).replace(/\.md$/, ""));
+    }
+    if (plan.content) {
+      properties.content = str2(plan.content);
+      properties.content_hash = str2(stableHash2(plan.content));
+      properties.content_length = int(plan.content.length);
+    }
+    if (plan.updatedAt !== void 0) properties.updated_at = int(plan.updatedAt);
+    operations.push({ operation: "create_node", id: nodeId, label: "Plan", mode: "merge", properties });
+    if (sessionNodeId) {
+      operations.push({
+        operation: "create_edge",
+        id: deterministicId2("HAS_PLAN", [sessionNodeId, nodeId]),
+        from: sessionNodeId,
+        to: nodeId,
+        edge_type: "HAS_PLAN",
+        properties: { source: str2("claude-code-plan-mode") }
+      });
+    }
+    if (plan.planFilePath) {
+      const fileNodeId = deterministicExecutionId3("CodeFile", [plan.planFilePath]);
+      operations.push(
+        {
+          operation: "create_node",
+          id: fileNodeId,
+          label: "CodeFile",
+          mode: "merge",
+          properties: {
+            path: str2(plan.planFilePath),
+            path_hash: str2(stableHash2(plan.planFilePath)),
+            basename: str2(basename2(plan.planFilePath)),
+            extension: str2("md"),
+            schema_version: int(TRACE_SCHEMA_VERSION3)
+          }
+        },
+        {
+          operation: "create_edge",
+          id: deterministicId2("PLAN_FILE", [nodeId, fileNodeId]),
+          from: nodeId,
+          to: fileNodeId,
+          edge_type: "PLAN_FILE",
+          properties: { source: str2("claude-code-plan-mode") }
+        }
+      );
+    }
+  }
+  return operations;
+}
+
 // src/lib/artifacts.ts
 async function writeContentArtifacts(config, auth, artifacts) {
   const unique = [...new Map(artifacts.map((artifact) => [artifact.key, artifact])).values()];
@@ -5048,6 +5189,9 @@ async function writeDirectUnit(input) {
   const traces = buildTraces({ walletAddress, claudeSessionId, events, summary });
   const bundle = buildGraphWriteBundle(walletAddress, traces);
   const operations = bundle.operations;
+  if (summary?.plans?.length && traces.length > 0) {
+    operations.push(...buildPlanOperations(summary.plans, claudeCodeSessionNodeId(traces[0])));
+  }
   const writeUrl = `${config.api_url.replace(/\/$/, "")}/api/v1/write`;
   const artifactResult = await writeContentArtifacts(config, auth, bundle.contentArtifacts);
   let graphOk = true;

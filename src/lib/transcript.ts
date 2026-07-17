@@ -5,6 +5,9 @@ import type { PendingEvent } from './event.js';
 
 const FILE_EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
+/** Matches on-disk plan-mode documents (~/.claude/plans/<slug>.md). */
+export const PLAN_FILE_RE = /[\\/]\.claude[\\/]plans[\\/][^\\/]+\.md$/;
+
 interface TranscriptEntry {
   type?: string;
   isMeta?: boolean;
@@ -14,11 +17,27 @@ interface TranscriptEntry {
   sessionId?: string;
   cwd?: string;
   timestamp?: string;
+  attachment?: {
+    type?: string;
+    planFilePath?: string;
+  };
   message?: {
     role?: string;
     model?: string;
     content?: unknown;
   };
+}
+
+/**
+ * A plan-mode plan observed in a transcript. Three signals feed it, strongest
+ * first: `plan_mode` attachments carry planFilePath, ExitPlanMode carries the
+ * full markdown in input.plan, and Write/Edit calls targeting ~/.claude/plans/
+ * carry both path and (for Write) content. Last full body seen wins.
+ */
+export interface TranscriptPlan {
+  planFilePath?: string;
+  content?: string;
+  updatedAt?: number;
 }
 
 export interface TranscriptSummary {
@@ -29,6 +48,7 @@ export interface TranscriptSummary {
   messageCount: number;
   filesChanged: number;
   parentSessionId?: string;
+  plans?: TranscriptPlan[];
 }
 
 function readLines(transcriptPath: string): TranscriptEntry[] {
@@ -87,11 +107,46 @@ export function parseTranscriptSummary(transcriptPath: string): TranscriptSummar
   const summary: TranscriptSummary = { messageCount: 0, filesChanged: 0 };
   const changedFiles = new Set<string>();
   const seenUuids = new Set<string>();
+  const plansByPath = new Map<string, TranscriptPlan>();
+  let pathlessPlan: TranscriptPlan | undefined;
+  let currentPlanPath: string | undefined;
+  let lastTs: number | undefined;
+
+  const planForPath = (planFilePath: string): TranscriptPlan => {
+    let plan = plansByPath.get(planFilePath);
+    if (!plan) {
+      plan = { planFilePath };
+      plansByPath.set(planFilePath, plan);
+      // A pathless ExitPlanMode plan seen earlier belongs to this file.
+      if (pathlessPlan?.content && !plan.content) {
+        plan.content = pathlessPlan.content;
+        plan.updatedAt = pathlessPlan.updatedAt;
+        pathlessPlan = undefined;
+      }
+    }
+    currentPlanPath = planFilePath;
+    return plan;
+  };
+
+  const recordPlanContent = (content: string): void => {
+    const target = currentPlanPath ? planForPath(currentPlanPath) : (pathlessPlan ??= {});
+    target.content = content;
+    target.updatedAt = lastTs;
+  };
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     if (!summary.claudeSessionId && typeof entry.sessionId === 'string') summary.claudeSessionId = entry.sessionId;
     if (!summary.cwd && typeof entry.cwd === 'string') summary.cwd = entry.cwd;
+    if (typeof entry.timestamp === 'string') {
+      const t = Date.parse(entry.timestamp);
+      if (!Number.isNaN(t)) lastTs = t;
+    }
+
+    if (entry.type === 'attachment' && entry.attachment?.type === 'plan_mode' && typeof entry.attachment.planFilePath === 'string') {
+      const plan = planForPath(entry.attachment.planFilePath);
+      if (plan.updatedAt === undefined) plan.updatedAt = lastTs;
+    }
 
     // parent_session_id (from the first records only, before within-file chaining).
     if (summary.parentSessionId === undefined && i < 40) {
@@ -114,9 +169,19 @@ export function parseTranscriptSummary(transcriptPath: string): TranscriptSummar
         for (const block of content) {
           if (!block || typeof block !== 'object') continue;
           const b = block as { type?: string; name?: string; input?: Record<string, unknown> };
-          if (b.type === 'tool_use' && b.name && FILE_EDIT_TOOLS.has(b.name)) {
+          if (b.type !== 'tool_use' || !b.name) continue;
+          if (FILE_EDIT_TOOLS.has(b.name)) {
             const fp = (b.input?.file_path ?? b.input?.path) as string | undefined;
-            if (typeof fp === 'string' && fp) changedFiles.add(fp);
+            if (typeof fp === 'string' && fp) {
+              changedFiles.add(fp);
+              if (PLAN_FILE_RE.test(fp)) {
+                const plan = planForPath(fp);
+                plan.updatedAt = lastTs;
+                if (b.name === 'Write' && typeof b.input?.content === 'string') plan.content = b.input.content;
+              }
+            }
+          } else if (b.name === 'ExitPlanMode' && typeof b.input?.plan === 'string' && b.input.plan.trim()) {
+            recordPlanContent(b.input.plan);
           }
         }
       }
@@ -124,6 +189,8 @@ export function parseTranscriptSummary(transcriptPath: string): TranscriptSummar
   }
 
   summary.filesChanged = changedFiles.size;
+  const plans = [...plansByPath.values(), ...(pathlessPlan?.content ? [pathlessPlan] : [])];
+  if (plans.length > 0) summary.plans = plans;
   return summary;
 }
 

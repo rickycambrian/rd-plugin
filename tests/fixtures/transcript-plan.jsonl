@@ -1,0 +1,5 @@
+{"type":"user","sessionId":"sess-plan","cwd":"/tmp/proj","timestamp":"2026-07-01T10:00:00.000Z","message":{"role":"user","content":"Build the widget"}}
+{"type":"attachment","attachment":{"type":"plan_mode","reminderType":"full","isSubAgent":false,"planFilePath":"/Users/u/.claude/plans/witty-widget.md","planExists":false},"timestamp":"2026-07-01T10:01:00.000Z"}
+{"type":"assistant","timestamp":"2026-07-01T10:02:00.000Z","message":{"role":"assistant","model":"claude-fable-5","content":[{"type":"tool_use","id":"t1","name":"Write","input":{"file_path":"/Users/u/.claude/plans/witty-widget.md","content":"# Plan v1"}}]}}
+{"type":"assistant","timestamp":"2026-07-01T10:03:00.000Z","message":{"role":"assistant","model":"claude-fable-5","content":[{"type":"tool_use","id":"t2","name":"ExitPlanMode","input":{"plan":"# Plan v2 final"}}]}}
+{"type":"assistant","timestamp":"2026-07-01T10:04:00.000Z","message":{"role":"assistant","model":"claude-fable-5","content":[{"type":"tool_use","id":"t3","name":"Edit","input":{"file_path":"/tmp/proj/widget.py","old_string":"a","new_string":"b"}}]}}

@@ -10,8 +10,13 @@ import { kfdbAuthFromConfig } from './lib/kfdb-auth.js';
 import { writeDirectUnit, writeGatewayUnit } from './lib/writer.js';
 import { selectBackfillCandidates, type DiscoveredSession } from './lib/backfill-core.js';
 import { wantsHelp } from './lib/cli-help.js';
+import { claudeCodeSessionNodeId, type ClaudeCodeHookTrace } from 'rickydata/kfdb';
+import { RD_AGENT_ID } from './lib/trace.js';
+import { writeGraph } from './lib/graph.js';
+import { buildPlanOperations, buildSessionStubOperation } from './lib/plan.js';
+import type { KfdbAuth } from './lib/kfdb-auth.js';
 
-const USAGE = `usage: node backfill.mjs [--since <ISO-date>] [--limit <n>] [--sleep <ms>]
+const USAGE = `usage: node backfill.mjs [--since <ISO-date>] [--limit <n>] [--sleep <ms>] [--plans]
 
 Replay historical Claude Code transcripts through the flush write path so past
 sessions land in the graph. Resumable via a per-session watermark in state.json.
@@ -19,6 +24,10 @@ sessions land in the graph. Resumable via a per-session watermark in state.json.
   --since <ISO-date>  only replay sessions modified on/after this date
   --limit <n>         max sessions to replay (default 100)
   --sleep <ms>        delay between sessions (default 1000)
+  --plans             plans-only pass: scan ALL transcripts (ignores the
+                      backfill watermark) for plan-mode plans, upsert Plan
+                      nodes + HAS_PLAN edges, then sweep ~/.claude/plans/*.md
+                      for current on-disk bodies (direct sink only)
   -h, --help          show this help and exit
 `;
 
@@ -32,7 +41,7 @@ sessions land in the graph. Resumable via a per-session watermark in state.json.
  */
 type SessionFile = DiscoveredSession;
 
-function parseArgs(args: string[]): { since?: number; limit: number; sleepMs: number } {
+function parseArgs(args: string[]): { since?: number; limit: number; sleepMs: number; plans: boolean } {
   const get = (flag: string): string | undefined => {
     const i = args.indexOf(flag);
     return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
@@ -45,6 +54,7 @@ function parseArgs(args: string[]): { since?: number; limit: number; sleepMs: nu
     since: Number.isNaN(since) ? undefined : since,
     limit: limitRaw ? Math.max(1, parseInt(limitRaw, 10) || 0) : 100,
     sleepMs: sleepRaw ? Math.max(0, parseInt(sleepRaw, 10) || 0) : 1000,
+    plans: args.includes('--plans'),
   };
 }
 
@@ -81,13 +91,88 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Raw markers that make a transcript worth parsing in the plans-only pass. */
+const PLAN_MARKERS = ['"plan_mode"', '"ExitPlanMode"', '.claude/plans/'];
+
+/** Keep plan bodies safely under KFDB's 1 MB per-property limit. */
+const MAX_PLAN_CONTENT_BYTES = 1_000_000;
+
+/**
+ * Plans-only pass (SPEC: plan ingestion). Ignores the backfill watermark on
+ * purpose: it retrofits Plan nodes onto sessions that were already replayed
+ * before plan extraction existed. Cheap raw-marker scan first, full parse only
+ * on hits. Then sweeps ~/.claude/plans/*.md so every Plan node carries the
+ * current on-disk body (later edits from other sessions included).
+ */
+async function runPlansPass(opts: { apiUrl: string; auth: KfdbAuth; walletAddress: string; sleepMs: number }): Promise<void> {
+  const { apiUrl, auth, walletAddress, sleepMs } = opts;
+  let sessionsWithPlans = 0;
+
+  for (const session of collectSessionFiles()) {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(session.file, 'utf8');
+    } catch {
+      continue;
+    }
+    if (!PLAN_MARKERS.some((m) => raw.includes(m))) continue;
+    const summary = parseTranscriptSummary(session.file);
+    if (!summary.plans?.length) continue;
+    const claudeSessionId = summary.claudeSessionId ?? session.id;
+    const sessionNodeId = claudeCodeSessionNodeId({
+      walletAddress,
+      agentId: RD_AGENT_ID,
+      sessionId: claudeSessionId,
+      claudeSessionId,
+    } as ClaudeCodeHookTrace);
+    const operations = [
+      buildSessionStubOperation(sessionNodeId, walletAddress, RD_AGENT_ID, claudeSessionId),
+      ...buildPlanOperations(summary.plans, sessionNodeId),
+    ];
+    try {
+      await writeGraph(apiUrl, auth, operations);
+      sessionsWithPlans += 1;
+      process.stdout.write(`  plans: ${claudeSessionId} — ${summary.plans.length} plan(s), ${operations.length} ops\n`);
+    } catch (err) {
+      log('warn', 'plans pass session failed', { id: claudeSessionId, error: (err as Error).message });
+    }
+    if (sleepMs > 0) await sleep(sleepMs);
+  }
+
+  let swept = 0;
+  const plansDir = path.join(os.homedir(), '.claude', 'plans');
+  let dirents: fs.Dirent[] = [];
+  try {
+    dirents = fs.readdirSync(plansDir, { withFileTypes: true });
+  } catch {
+    // no plans dir — nothing to sweep
+  }
+  for (const dirent of dirents) {
+    if (!dirent.isFile() || !dirent.name.endsWith('.md')) continue;
+    const planFilePath = path.join(plansDir, dirent.name);
+    try {
+      const stat = fs.statSync(planFilePath);
+      if (stat.size === 0 || stat.size > MAX_PLAN_CONTENT_BYTES) continue;
+      const content = fs.readFileSync(planFilePath, 'utf8');
+      const operations = buildPlanOperations([{ planFilePath, content, updatedAt: Math.round(stat.mtimeMs) }]);
+      await writeGraph(apiUrl, auth, operations);
+      swept += 1;
+    } catch (err) {
+      log('warn', 'plans sweep file failed', { file: dirent.name, error: (err as Error).message });
+    }
+    if (sleepMs > 0) await sleep(sleepMs);
+  }
+
+  process.stdout.write(`backfill --plans: done, ${sessionsWithPlans} session(s) linked, ${swept} plan file(s) swept\n`);
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (wantsHelp(args)) {
     process.stdout.write(USAGE);
     return;
   }
-  const { since, limit, sleepMs } = parseArgs(args);
+  const { since, limit, sleepMs, plans } = parseArgs(args);
 
   const config = loadConfig();
   setLogLevel(config.log_level);
@@ -119,6 +204,15 @@ async function main(): Promise<void> {
     }
   }
   const auth = kfdbAuthFromConfig(config, deriveHeaders);
+
+  if (plans) {
+    if (sink !== 'direct') {
+      process.stdout.write('backfill: --plans requires the direct sink\n');
+      return;
+    }
+    await runPlansPass({ apiUrl: config.api_url, auth, walletAddress, sleepMs });
+    return;
+  }
 
   const state = readState();
   state.backfilled = state.backfilled ?? {};

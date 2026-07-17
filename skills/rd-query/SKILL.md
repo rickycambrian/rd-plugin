@@ -31,6 +31,12 @@ Invoke when the user asks things like:
 - Versions of a file: match the code/artifact nodes linked from the wallet's sessions, filtered by path.
 - Files in a session: traverse from a `ClaudeCodeSession` to its file nodes.
 
+### Plans (plan mode)
+- Plans for a session: `MATCH (s:ClaudeCodeSession {claude_session_id: $sid})-[:HAS_PLAN]->(p:Plan) RETURN p.slug, p.path, p.content`
+- Find a plan by slug: `MATCH (p:Plan) WHERE p.slug = $slug RETURN p`
+- Sessions that worked a plan: `MATCH (s:ClaudeCodeSession)-[:HAS_PLAN]->(p:Plan) WHERE p.slug = $slug RETURN s.claude_session_id`
+- `p.content` is the full plan markdown (freshest of transcript/ExitPlanMode/on-disk body); `PLAN_FILE` links a Plan to its `CodeFile` (~/.claude/plans/<slug>.md).
+
 ### Cross-harness view (D6)
 - A `HarnessSessionKey` node merges all writers for one session. To see everything about a session:
   ```
