@@ -4,7 +4,8 @@ import type { TranscriptSummary } from './transcript.js';
 import { kfdbAuthHeaders, type KfdbAuth } from './kfdb-auth.js';
 import { claudeCodeSessionNodeId } from 'rickydata/kfdb';
 import { buildTraces } from './trace.js';
-import { buildGraphWriteBundle, batchOperations, GRAPH_WRITE_TIMEOUT_MS } from './graph.js';
+import { buildGraphWriteBundle, batchOperations, GRAPH_WRITE_TIMEOUT_MS, buildSessionIssueRefsOp } from './graph.js';
+import { sessionIssueRefs } from './issue-refs.js';
 import { buildPlanOperations } from './plan.js';
 import { collectEmbedTargets, embedTargets } from './embed.js';
 import { writeContentArtifacts } from './artifacts.js';
@@ -56,8 +57,18 @@ export async function writeDirectUnit(input: DirectUnitInput): Promise<DirectUni
   const traces = buildTraces({ walletAddress, claudeSessionId, events, summary });
   const bundle = buildGraphWriteBundle(walletAddress, traces);
   const operations = bundle.operations;
-  if (summary?.plans?.length && traces.length > 0) {
-    operations.push(...buildPlanOperations(summary.plans, claudeCodeSessionNodeId(traces[0])));
+  if (traces.length > 0) {
+    const sessionNodeId = claudeCodeSessionNodeId(traces[0]);
+    if (summary?.plans?.length) {
+      operations.push(...buildPlanOperations(summary.plans, sessionNodeId));
+    }
+    const facts = sessionIssueRefs(events.map((e) => ({
+      prompt: e.prompt,
+      repo: { owner: e.repository?.owner, repo: e.repository?.repository, branch: e.repository?.branch },
+    })));
+    const branch = events.map((e) => e.repository?.branch).find((b): b is string => Boolean(b));
+    const factsOp = buildSessionIssueRefsOp(sessionNodeId, { ...facts, branch });
+    if (factsOp) operations.push(factsOp);
   }
   const writeUrl = `${config.api_url.replace(/\/$/, '')}/api/v1/write`;
 

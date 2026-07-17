@@ -27,6 +27,7 @@ const ENTRYPOINTS = [
   'codex-flush.ts',
   'drain-queue.ts',
   'flush.ts',
+  'monitor-advisory.ts',
   'session-start.ts',
   'task-context.ts',
   'setup-codex.ts',

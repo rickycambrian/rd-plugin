@@ -78,6 +78,37 @@ export async function writeGraph(
   return operations.length;
 }
 
+type KfdbValue = { String: string } | { Integer: number } | { Array: KfdbValue[] };
+const str = (v: string): KfdbValue => ({ String: v });
+const int = (v: number): KfdbValue => ({ Integer: v });
+const strArray = (vs: string[]): KfdbValue => ({ Array: vs.map(str) });
+
+export const ISSUE_REFS_SCHEMA = 'rickydata.issue_refs.v1';
+
+/**
+ * A supplementary ClaudeCodeSession merge-op that stamps the session's detected
+ * GitHub issue refs (+ current branch) as first-class node properties the home
+ * linker reads deterministically. Rides the same node id the SDK builder emits
+ * (`claudeCodeSessionNodeId`), so it merges onto the existing session node. The
+ * per-event prompt text the SDK persists is hashed, not stored — this op is the
+ * only channel carrying readable refs across EVERY prompt of the session.
+ * Returns null when no refs were found (branch stays readable via repository.branch).
+ */
+export function buildSessionIssueRefsOp(
+  sessionNodeId: string,
+  facts: { explicit: string[]; slug: string[]; branch?: string },
+): GraphOp | null {
+  if (facts.explicit.length === 0 && facts.slug.length === 0) return null;
+  const properties: Record<string, KfdbValue> = {
+    issue_refs_schema: str(ISSUE_REFS_SCHEMA),
+    issue_refs_updated_at: int(Date.now()),
+  };
+  if (facts.explicit.length) properties.issue_refs = strArray(facts.explicit);
+  if (facts.slug.length) properties.issue_refs_slug = strArray(facts.slug);
+  if (facts.branch) properties.branch = str(facts.branch);
+  return { operation: 'create_node', id: sessionNodeId, label: 'ClaudeCodeSession', mode: 'merge', properties };
+}
+
 export function batchOperations(operations: GraphOp[]): GraphOp[][] {
   const batches: GraphOp[][] = [];
   for (let offset = 0; offset < operations.length; offset += BATCH_SIZE) {

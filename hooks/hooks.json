@@ -16,8 +16,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "tmp=$(mktemp); cat > \"$tmp\"; node ${CLAUDE_PLUGIN_ROOT}/dist/capture.mjs < \"$tmp\"; node ${CLAUDE_PLUGIN_ROOT}/dist/task-context.mjs < \"$tmp\"; rm -f \"$tmp\"",
-            "timeout": 5
+            "command": "tmp=$(mktemp); cat > \"$tmp\"; node ${CLAUDE_PLUGIN_ROOT}/dist/capture.mjs < \"$tmp\"; node ${CLAUDE_PLUGIN_ROOT}/dist/task-context.mjs < \"$tmp\"; node ${CLAUDE_PLUGIN_ROOT}/dist/monitor-advisory.mjs < \"$tmp\"; rm -f \"$tmp\"",
+            "timeout": 6
           }
         ]
       }

@@ -109,10 +109,10 @@ function hexToBytes(hex) {
   }
   return array;
 }
-function utf8ToBytes(str3) {
-  if (typeof str3 !== "string")
+function utf8ToBytes(str4) {
+  if (typeof str4 !== "string")
     throw new Error("string expected");
-  return new Uint8Array(new TextEncoder().encode(str3));
+  return new Uint8Array(new TextEncoder().encode(str4));
 }
 function toBytes(data) {
   if (typeof data === "string")
@@ -2078,7 +2078,7 @@ var DER = {
     }
   },
   toSig(hex) {
-    const { Err: E, _int: int2, _tlv: tlv } = DER;
+    const { Err: E, _int: int3, _tlv: tlv } = DER;
     const data = ensureBytes("signature", hex);
     const { v: seqBytes, l: seqLeftBytes } = tlv.decode(48, data);
     if (seqLeftBytes.length)
@@ -2087,12 +2087,12 @@ var DER = {
     const { v: sBytes, l: sLeftBytes } = tlv.decode(2, rLeftBytes);
     if (sLeftBytes.length)
       throw new E("invalid signature: left bytes after parsing");
-    return { r: int2.decode(rBytes), s: int2.decode(sBytes) };
+    return { r: int3.decode(rBytes), s: int3.decode(sBytes) };
   },
   hexFromSig(sig) {
-    const { _tlv: tlv, _int: int2 } = DER;
-    const rs = tlv.encode(2, int2.encode(sig.r));
-    const ss = tlv.encode(2, int2.encode(sig.s));
+    const { _tlv: tlv, _int: int3 } = DER;
+    const rs = tlv.encode(2, int3.encode(sig.r));
+    const ss = tlv.encode(2, int3.encode(sig.s));
     const seq = rs + ss;
     return tlv.encode(48, seq);
   }
@@ -4405,6 +4405,21 @@ function buildGraphWriteBundle(walletAddress, traces) {
   }
   return { operations, contentArtifacts };
 }
+var str2 = (v) => ({ String: v });
+var int = (v) => ({ Integer: v });
+var strArray = (vs) => ({ Array: vs.map(str2) });
+var ISSUE_REFS_SCHEMA = "rickydata.issue_refs.v1";
+function buildSessionIssueRefsOp(sessionNodeId, facts) {
+  if (facts.explicit.length === 0 && facts.slug.length === 0) return null;
+  const properties = {
+    issue_refs_schema: str2(ISSUE_REFS_SCHEMA),
+    issue_refs_updated_at: int(Date.now())
+  };
+  if (facts.explicit.length) properties.issue_refs = strArray(facts.explicit);
+  if (facts.slug.length) properties.issue_refs_slug = strArray(facts.slug);
+  if (facts.branch) properties.branch = str2(facts.branch);
+  return { operation: "create_node", id: sessionNodeId, label: "ClaudeCodeSession", mode: "merge", properties };
+}
 function batchOperations(operations) {
   const batches = [];
   for (let offset = 0; offset < operations.length; offset += BATCH_SIZE) {
@@ -4733,6 +4748,74 @@ function buildTraces(input) {
   });
 }
 
+// src/lib/issue-refs.ts
+var OWNER_REPO = /([A-Za-z0-9][-A-Za-z0-9_.]*)\/([A-Za-z0-9][-A-Za-z0-9_.]*)#(\d+)/g;
+var ISSUE_URL = /https?:\/\/github\.com\/([^/\s#]+)\/([^/\s#]+)\/issues\/(\d+)/gi;
+var BARE = /(?<![\w/#])#(\d+)/g;
+var SLUG = /\bissue-([a-z0-9][-a-z0-9_.]*)-(\d+)\b/gi;
+function stripFences(text) {
+  return text.replace(/```[\s\S]*?```/g, " ").replace(/~~~[\s\S]*?~~~/g, " ");
+}
+function keyOf(ref) {
+  return [ref.owner ?? "", ref.repo ?? "", ref.number].join("|");
+}
+function extractIssueRefs(prompt, ctx = {}) {
+  const text = stripFences(typeof prompt === "string" ? prompt : "");
+  const byKey = /* @__PURE__ */ new Map();
+  const add = (ref) => {
+    const key = keyOf(ref);
+    const prior = byKey.get(key);
+    if (!prior || prior.tier === "slug_branch" && ref.tier === "explicit_ref") {
+      byKey.set(key, ref);
+    }
+  };
+  for (const m of text.matchAll(OWNER_REPO)) {
+    add({ owner: m[1].toLowerCase(), repo: m[2], number: Number(m[3]), tier: "explicit_ref" });
+  }
+  for (const m of text.matchAll(ISSUE_URL)) {
+    add({ owner: m[1].toLowerCase(), repo: m[2], number: Number(m[3]), tier: "explicit_ref" });
+  }
+  for (const m of text.matchAll(BARE)) {
+    if (ctx.owner && ctx.repo) {
+      add({ owner: ctx.owner.toLowerCase(), repo: ctx.repo, number: Number(m[1]), tier: "explicit_ref" });
+    }
+  }
+  const slugFrom = (source) => {
+    for (const m of source.matchAll(SLUG)) {
+      const slugRepo = m[1];
+      const number = Number(m[2]);
+      const owner = ctx.owner && ctx.repo && slugRepo.toLowerCase() === ctx.repo.toLowerCase() ? ctx.owner.toLowerCase() : void 0;
+      add({ owner, repo: slugRepo, number, tier: "slug_branch" });
+    }
+  };
+  slugFrom(text);
+  if (ctx.branch) slugFrom(ctx.branch);
+  return [...byKey.values()];
+}
+function canonicalRef(ref) {
+  const left = ref.owner ? `${ref.owner}/${ref.repo}` : ref.repo ?? "";
+  return `${left}#${ref.number}`;
+}
+function sessionIssueRefs(prompts) {
+  const byKey = /* @__PURE__ */ new Map();
+  for (const p of prompts) {
+    const ctx = { owner: p.repo?.owner, repo: p.repo?.repo, branch: p.repo?.branch };
+    for (const ref of extractIssueRefs(p.prompt ?? "", ctx)) {
+      const key = keyOf(ref);
+      const prior = byKey.get(key);
+      if (!prior || prior.tier === "slug_branch" && ref.tier === "explicit_ref") byKey.set(key, ref);
+    }
+  }
+  const explicit = [];
+  const slug = [];
+  for (const ref of byKey.values()) {
+    (ref.tier === "explicit_ref" ? explicit : slug).push(canonicalRef(ref));
+  }
+  explicit.sort();
+  slug.sort();
+  return { explicit, slug };
+}
+
 // src/lib/plan.ts
 import { createHash as createHash9 } from "node:crypto";
 var TRACE_SCHEMA_VERSION3 = 3;
@@ -4760,10 +4843,10 @@ function basename2(input) {
   const normalized = input.replace(/\\/g, "/");
   return normalized.split("/").filter(Boolean).pop() ?? normalized;
 }
-function str2(v) {
+function str3(v) {
   return { String: v };
 }
-function int(v) {
+function int2(v) {
   return { Integer: v };
 }
 function planNodeId(plan) {
@@ -4775,20 +4858,20 @@ function buildPlanOperations(plans, sessionNodeId) {
     if (!plan.planFilePath && !plan.content) continue;
     const nodeId = planNodeId(plan);
     const properties = {
-      source: str2("claude-code-plan-mode"),
-      schema_version: int(TRACE_SCHEMA_VERSION3)
+      source: str3("claude-code-plan-mode"),
+      schema_version: int2(TRACE_SCHEMA_VERSION3)
     };
     if (plan.planFilePath) {
-      properties.path = str2(plan.planFilePath);
-      properties.path_hash = str2(stableHash2(plan.planFilePath));
-      properties.slug = str2(basename2(plan.planFilePath).replace(/\.md$/, ""));
+      properties.path = str3(plan.planFilePath);
+      properties.path_hash = str3(stableHash2(plan.planFilePath));
+      properties.slug = str3(basename2(plan.planFilePath).replace(/\.md$/, ""));
     }
     if (plan.content) {
-      properties.content = str2(plan.content);
-      properties.content_hash = str2(stableHash2(plan.content));
-      properties.content_length = int(plan.content.length);
+      properties.content = str3(plan.content);
+      properties.content_hash = str3(stableHash2(plan.content));
+      properties.content_length = int2(plan.content.length);
     }
-    if (plan.updatedAt !== void 0) properties.updated_at = int(plan.updatedAt);
+    if (plan.updatedAt !== void 0) properties.updated_at = int2(plan.updatedAt);
     operations.push({ operation: "create_node", id: nodeId, label: "Plan", mode: "merge", properties });
     if (sessionNodeId) {
       operations.push({
@@ -4797,7 +4880,7 @@ function buildPlanOperations(plans, sessionNodeId) {
         from: sessionNodeId,
         to: nodeId,
         edge_type: "HAS_PLAN",
-        properties: { source: str2("claude-code-plan-mode") }
+        properties: { source: str3("claude-code-plan-mode") }
       });
     }
     if (plan.planFilePath) {
@@ -4809,11 +4892,11 @@ function buildPlanOperations(plans, sessionNodeId) {
           label: "CodeFile",
           mode: "merge",
           properties: {
-            path: str2(plan.planFilePath),
-            path_hash: str2(stableHash2(plan.planFilePath)),
-            basename: str2(basename2(plan.planFilePath)),
-            extension: str2("md"),
-            schema_version: int(TRACE_SCHEMA_VERSION3)
+            path: str3(plan.planFilePath),
+            path_hash: str3(stableHash2(plan.planFilePath)),
+            basename: str3(basename2(plan.planFilePath)),
+            extension: str3("md"),
+            schema_version: int2(TRACE_SCHEMA_VERSION3)
           }
         },
         {
@@ -4822,7 +4905,7 @@ function buildPlanOperations(plans, sessionNodeId) {
           from: nodeId,
           to: fileNodeId,
           edge_type: "PLAN_FILE",
-          properties: { source: str2("claude-code-plan-mode") }
+          properties: { source: str3("claude-code-plan-mode") }
         }
       );
     }
@@ -5233,8 +5316,18 @@ async function writeDirectUnit(input) {
   const traces = buildTraces({ walletAddress, claudeSessionId, events, summary });
   const bundle = buildGraphWriteBundle(walletAddress, traces);
   const operations = bundle.operations;
-  if (summary?.plans?.length && traces.length > 0) {
-    operations.push(...buildPlanOperations(summary.plans, claudeCodeSessionNodeId(traces[0])));
+  if (traces.length > 0) {
+    const sessionNodeId = claudeCodeSessionNodeId(traces[0]);
+    if (summary?.plans?.length) {
+      operations.push(...buildPlanOperations(summary.plans, sessionNodeId));
+    }
+    const facts = sessionIssueRefs(events.map((e) => ({
+      prompt: e.prompt,
+      repo: { owner: e.repository?.owner, repo: e.repository?.repository, branch: e.repository?.branch }
+    })));
+    const branch = events.map((e) => e.repository?.branch).find((b) => Boolean(b));
+    const factsOp = buildSessionIssueRefsOp(sessionNodeId, { ...facts, branch });
+    if (factsOp) operations.push(factsOp);
   }
   const writeUrl = `${config.api_url.replace(/\/$/, "")}/api/v1/write`;
   const artifactResult = await writeContentArtifacts(config, auth, bundle.contentArtifacts);
