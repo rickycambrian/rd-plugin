@@ -3252,10 +3252,91 @@ function contentHashOf(request) {
   return hash16(`${request.url}
 ${JSON.stringify(request.body)}`);
 }
+function enqueue(request, dirs = {}) {
+  const dir = dirs.dir ?? QUEUE_DIR;
+  try {
+    fs4.mkdirSync(dir, { recursive: true });
+    const contentHash = contentHashOf(request);
+    const keyHash = request.dedupeKey ? hash16(request.dedupeKey) : void 0;
+    let existing = [];
+    try {
+      existing = fs4.readdirSync(dir).filter((f) => f.endsWith(".json"));
+    } catch {
+    }
+    if (existing.some((f) => f.includes(`-c${contentHash}.json`))) {
+      log("debug", "enqueue skipped: identical entry already queued", { contentHash });
+      return;
+    }
+    if (keyHash) {
+      const superseded = existing.filter((f) => f.includes(`-k${keyHash}-`));
+      for (const f of superseded) {
+        try {
+          fs4.rmSync(path4.join(dir, f), { force: true });
+        } catch {
+        }
+      }
+      if (superseded.length > 0) {
+        log("debug", "enqueue superseded older entries", { dedupeKey: request.dedupeKey, replaced: superseded.length });
+      }
+    }
+    const rand = Math.random().toString(36).slice(2, 10);
+    const keySegment = keyHash ? `-k${keyHash}` : "";
+    const name = `${Date.now()}-${rand}${keySegment}-c${contentHash}.json`;
+    const entry = { ...request, queuedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    fs4.writeFileSync(path4.join(dir, name), JSON.stringify(entry), { mode: 384 });
+  } catch (err) {
+    log("warn", "enqueue failed", { error: err.message });
+  }
+}
 function classifyStatus(status) {
   const flappy4xx = /* @__PURE__ */ new Set([401, 403, 404, 405, 408, 429]);
   if (status >= 400 && status < 500 && !flappy4xx.has(status)) return "permanent";
   return "transient";
+}
+function reviveTransientDeadLetters(dirs = {}) {
+  const dir = dirs.dir ?? QUEUE_DIR;
+  const deadDir = dirs.deadDir ?? QUEUE_DEAD_DIR;
+  const result = { revived: 0, retained: 0, invalid: 0 };
+  let files;
+  try {
+    files = fs4.readdirSync(deadDir).filter((file) => file.endsWith(".json"));
+  } catch {
+    return result;
+  }
+  for (const file of files) {
+    const full = path4.join(deadDir, file);
+    let entry;
+    try {
+      entry = JSON.parse(fs4.readFileSync(full, "utf8"));
+    } catch {
+      result.invalid += 1;
+      continue;
+    }
+    const status = /\bHTTP\s+(\d{3})\b/i.exec(entry.lastError ?? "")?.[1];
+    if (!status || classifyStatus(Number(status)) !== "transient") {
+      result.retained += 1;
+      continue;
+    }
+    const { attempts: _attempts, nextAttemptAt: _next, lastError: _error, queuedAt: _queued, ...request } = entry;
+    enqueue(request, { dir, deadDir });
+    const contentHash = contentHashOf(request);
+    let durable = false;
+    try {
+      durable = fs4.readdirSync(dir).some((name) => name.includes(`-c${contentHash}.json`));
+    } catch {
+    }
+    if (!durable) {
+      result.retained += 1;
+      continue;
+    }
+    try {
+      fs4.rmSync(full, { force: true });
+      result.revived += 1;
+    } catch {
+      result.retained += 1;
+    }
+  }
+  return result;
 }
 function backoffMs(attempts) {
   const base = Math.min(BACKOFF_BASE_MS * 2 ** Math.max(0, attempts - 1), BACKOFF_CAP_MS);
@@ -3460,12 +3541,13 @@ function wantsHelp(args) {
 }
 
 // src/drain-queue.ts
-var USAGE = `usage: node drain-queue.mjs [--batch=<n>] [--budget-min=<n>] [--auto]
+var USAGE = `usage: node drain-queue.mjs [--batch=<n>] [--budget-min=<n>] [--revive-transient] [--auto]
 
 Replay the offline retry queue (re-derives S2D auth at send time).
 
   --batch=<n>       max queued entries to send this run (default 500)
   --budget-min=<n>  wall-clock budget in minutes (default 30)
+  --revive-transient restore dead letters now classified as transient
   --auto            suppress the JSON result line (cron/opportunistic use)
   -h, --help        show this help and exit
 `;
@@ -3481,9 +3563,14 @@ async function main() {
   const budgetMin = budgetArg ? Math.max(1, parseInt(budgetArg.split("=")[1], 10) || 30) : 30;
   const config = loadConfig();
   setLogLevel(config.log_level);
+  const revival = args.includes("--revive-transient") ? reviveTransientDeadLetters() : { revived: 0, retained: 0, invalid: 0 };
   const pending = queueSize();
   if (pending === 0) {
     log("debug", "drain: queue empty");
+    if (args.includes("--revive-transient") && !args.includes("--auto")) {
+      process.stdout.write(`${JSON.stringify({ ...revival, remaining: 0 })}
+`);
+    }
     return;
   }
   const sink = resolveSink(config);
@@ -3499,9 +3586,15 @@ async function main() {
     return;
   }
   const result = await drainQueue(kfdbAuthFromConfig(config, deriveHeaders), limit, { maxMs: budgetMin * 6e4 });
-  log("info", "drain complete", result);
+  const report = {
+    ...result,
+    revivedDeadLetters: revival.revived,
+    retainedDeadLetters: revival.retained,
+    invalidDeadLetters: revival.invalid
+  };
+  log("info", "drain complete", report);
   if (!args.includes("--auto")) {
-    process.stdout.write(`${JSON.stringify(result)}
+    process.stdout.write(`${JSON.stringify(report)}
 `);
   }
 }

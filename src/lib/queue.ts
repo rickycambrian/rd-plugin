@@ -147,6 +147,62 @@ function classifyStatus(status: number): 'permanent' | 'transient' {
   return 'transient';
 }
 
+export interface DeadLetterRevivalResult {
+  revived: number;
+  retained: number;
+  invalid: number;
+}
+
+/**
+ * Restore dead letters whose recorded HTTP status is transient under the
+ * current policy. This is intentionally explicit/admin-only: poison payloads
+ * and exhausted network failures remain isolated for inspection.
+ */
+export function reviveTransientDeadLetters(dirs: QueueDirs = {}): DeadLetterRevivalResult {
+  const dir = dirs.dir ?? QUEUE_DIR;
+  const deadDir = dirs.deadDir ?? QUEUE_DEAD_DIR;
+  const result: DeadLetterRevivalResult = { revived: 0, retained: 0, invalid: 0 };
+  let files: string[];
+  try {
+    files = fs.readdirSync(deadDir).filter((file) => file.endsWith('.json'));
+  } catch {
+    return result;
+  }
+  for (const file of files) {
+    const full = path.join(deadDir, file);
+    let entry: QueuedRequest;
+    try {
+      entry = JSON.parse(fs.readFileSync(full, 'utf8')) as QueuedRequest;
+    } catch {
+      result.invalid += 1;
+      continue;
+    }
+    const status = /\bHTTP\s+(\d{3})\b/i.exec(entry.lastError ?? '')?.[1];
+    if (!status || classifyStatus(Number(status)) !== 'transient') {
+      result.retained += 1;
+      continue;
+    }
+    const { attempts: _attempts, nextAttemptAt: _next, lastError: _error, queuedAt: _queued, ...request } = entry;
+    enqueue(request, { dir, deadDir });
+    const contentHash = contentHashOf(request);
+    let durable = false;
+    try {
+      durable = fs.readdirSync(dir).some((name) => name.includes(`-c${contentHash}.json`));
+    } catch { /* enqueue already logged the write failure */ }
+    if (!durable) {
+      result.retained += 1;
+      continue;
+    }
+    try {
+      fs.rmSync(full, { force: true });
+      result.revived += 1;
+    } catch {
+      result.retained += 1;
+    }
+  }
+  return result;
+}
+
 function backoffMs(attempts: number): number {
   const base = Math.min(BACKOFF_BASE_MS * 2 ** Math.max(0, attempts - 1), BACKOFF_CAP_MS);
   return Math.round(base * (0.8 + Math.random() * 0.4));

@@ -9,7 +9,7 @@ vi.mock('../src/lib/http.js', () => ({
   postForm: vi.fn(),
 }));
 
-import { enqueue, drainQueue, queueSize, type QueuedRequest } from '../src/lib/queue.js';
+import { enqueue, drainQueue, queueSize, reviveTransientDeadLetters, type QueuedRequest } from '../src/lib/queue.js';
 
 const AUTH = {
   apiKey: 'test-key',
@@ -72,6 +72,24 @@ describe('enqueue', () => {
     enqueue({ ...base, body: { operations: [1] }, dedupeKey: 'graph:s1:0' }, dirs());
     enqueue({ ...base, body: { operations: [2] }, dedupeKey: 'graph:s1:1' }, dirs());
     expect(queuedFiles()).toHaveLength(2);
+  });
+});
+
+describe('reviveTransientDeadLetters', () => {
+  it('revives failures now classified transient and leaves poison payloads isolated', () => {
+    const base = {
+      url: 'http://x/api/v1/kv', method: 'PUT' as const, body: { key: 'artifact' },
+      requiresBearer: true, requiresDerive: true, queuedAt: new Date().toISOString(), attempts: 2,
+    };
+    fs.writeFileSync(path.join(deadDir, 'flappy.json'), JSON.stringify({ ...base, lastError: 'HTTP 405: temporary route flap' }));
+    fs.writeFileSync(path.join(deadDir, 'poison.json'), JSON.stringify({ ...base, lastError: 'HTTP 400: malformed' }));
+    fs.writeFileSync(path.join(deadDir, 'invalid.json'), '{');
+
+    expect(reviveTransientDeadLetters(dirs())).toEqual({ revived: 1, retained: 1, invalid: 1 });
+    expect(queuedFiles()).toHaveLength(1);
+    expect(readEntry(queuedFiles()[0])).toMatchObject({ url: base.url, method: 'PUT', body: base.body });
+    expect(readEntry(queuedFiles()[0]).attempts).toBeUndefined();
+    expect(fs.readdirSync(deadDir).sort()).toEqual(['invalid.json', 'poison.json']);
   });
 });
 

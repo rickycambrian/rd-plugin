@@ -1,16 +1,17 @@
 import { loadConfig, resolveSink } from './lib/config.js';
 import { setLogLevel, log } from './lib/log.js';
 import { getDeriveHeaders, type DeriveHeaders } from './lib/derive.js';
-import { drainQueue, queueSize } from './lib/queue.js';
+import { drainQueue, queueSize, reviveTransientDeadLetters } from './lib/queue.js';
 import { kfdbAuthFromConfig } from './lib/kfdb-auth.js';
 import { wantsHelp } from './lib/cli-help.js';
 
-const USAGE = `usage: node drain-queue.mjs [--batch=<n>] [--budget-min=<n>] [--auto]
+const USAGE = `usage: node drain-queue.mjs [--batch=<n>] [--budget-min=<n>] [--revive-transient] [--auto]
 
 Replay the offline retry queue (re-derives S2D auth at send time).
 
   --batch=<n>       max queued entries to send this run (default 500)
   --budget-min=<n>  wall-clock budget in minutes (default 30)
+  --revive-transient restore dead letters now classified as transient
   --auto            suppress the JSON result line (cron/opportunistic use)
   -h, --help        show this help and exit
 `;
@@ -34,9 +35,15 @@ async function main(): Promise<void> {
   const config = loadConfig();
   setLogLevel(config.log_level);
 
+  const revival = args.includes('--revive-transient')
+    ? reviveTransientDeadLetters()
+    : { revived: 0, retained: 0, invalid: 0 };
   const pending = queueSize();
   if (pending === 0) {
     log('debug', 'drain: queue empty');
+    if (args.includes('--revive-transient') && !args.includes('--auto')) {
+      process.stdout.write(`${JSON.stringify({ ...revival, remaining: 0 })}\n`);
+    }
     return;
   }
 
@@ -55,9 +62,15 @@ async function main(): Promise<void> {
   }
 
   const result = await drainQueue(kfdbAuthFromConfig(config, deriveHeaders), limit, { maxMs: budgetMin * 60_000 });
-  log('info', 'drain complete', result as unknown as Record<string, unknown>);
+  const report = {
+    ...result,
+    revivedDeadLetters: revival.revived,
+    retainedDeadLetters: revival.retained,
+    invalidDeadLetters: revival.invalid,
+  };
+  log('info', 'drain complete', report as unknown as Record<string, unknown>);
   if (!args.includes('--auto')) {
-    process.stdout.write(`${JSON.stringify(result)}\n`);
+    process.stdout.write(`${JSON.stringify(report)}\n`);
   }
 }
 
