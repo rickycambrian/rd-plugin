@@ -1,6 +1,6 @@
 import type { ClaudeCodeHookTrace, RepositorySnapshot } from 'rickydata/kfdb';
 import type { PendingEvent } from './event.js';
-import type { TranscriptSummary } from './transcript.js';
+import type { TranscriptPlan, TranscriptSummary } from './transcript.js';
 import { sdkHookPayload } from './work-provenance.js';
 
 /** Stable agent id for Claude Code sessions in the execution graph. */
@@ -90,6 +90,10 @@ export function buildTraces(input: BuildTracesInput): ClaudeCodeHookTrace[] {
     if (sessionInitialPrompt !== undefined) trace.initialPrompt = sessionInitialPrompt;
     if (summary?.filesChanged !== undefined) trace.filesChanged = summary.filesChanged;
     if (summary?.parentSessionId !== undefined) trace.parentSessionId = summary.parentSessionId;
+    // Ride plans on the trace for spool/gateway parity: SDK >=1.16 emits Plan
+    // ops from trace.plans (same ids as our plan.ts). Vendored 1.13.2 ignores
+    // the extra field, so the direct sink keeps emitting plan ops itself.
+    if (summary?.plans?.length) (trace as ClaudeCodeHookTrace & { plans?: TranscriptPlan[] }).plans = summary.plans;
     const repository = group.find((event) => event.repository)?.repository;
     if (repository?.fullName !== undefined) trace.repository = repository as RepositorySnapshot;
     const baseRepository = group.find((event) => event.repository?.fullName)?.repository;

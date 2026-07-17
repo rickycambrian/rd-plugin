@@ -8,6 +8,7 @@ import type { CodexPendingEvent } from './event.js';
 import { buildCodexTraces } from './trace.js';
 import { buildCodexGraphWriteBundle } from './graph.js';
 import { writeContentArtifacts } from '../lib/artifacts.js';
+import { collectEmbedTargets, embedTargets } from '../lib/embed.js';
 import { writeCodexSpool } from './spool.js';
 
 export interface CodexDirectUnitInput {
@@ -69,6 +70,8 @@ export async function writeCodexDirectUnit(input: CodexDirectUnitInput): Promise
       log('warn', 'codex graph batch error; queued', { sessionId: codexSessionId, error: (err as Error).message });
     }
   }
+
+  await embedTargets(config.api_url, auth, collectEmbedTargets(operations), codexSessionId);
 
   return { ops: operations.length, graphOk, artifactOk: artifactResult.ok, artifacts: artifactResult.attempted };
 }

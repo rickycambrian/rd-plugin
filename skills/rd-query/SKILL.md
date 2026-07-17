@@ -46,6 +46,10 @@ Invoke when the user asks things like:
 
 ### Semantic search
 - Prefer the `kfdb` MCP server's semantic search tools for meaning-based queries over sessions, code, and notes; fall back to KQL `CONTAINS` filters for exact-string needs.
+- `POST /api/v1/semantic/search {query, label?, limit, threshold}` covers explicitly embedded pipeline nodes: `Plan` (plan markdown), `ClaudeCodeSession` (initial prompt), `CodeCommand` (command preview).
+
+### REST entity reads: always pass `?scope=private`
+`GET /api/v1/entities/<Label>` and `/entities/<Label>/<id>` default to the **shared/global** keyspace, while `POST /api/v1/query` defaults to private — so a node visible via KQL can 404 or count 0 via REST. Append `?scope=private` to every entity GET against wallet-scoped data (derive headers still required).
 
 ## Scoping rule
 

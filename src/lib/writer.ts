@@ -6,6 +6,7 @@ import { claudeCodeSessionNodeId } from 'rickydata/kfdb';
 import { buildTraces } from './trace.js';
 import { buildGraphWriteBundle, batchOperations, GRAPH_WRITE_TIMEOUT_MS } from './graph.js';
 import { buildPlanOperations } from './plan.js';
+import { collectEmbedTargets, embedTargets } from './embed.js';
 import { writeContentArtifacts } from './artifacts.js';
 import { writeSpool } from './spool.js';
 import { writeLegacyStream } from './legacy-stream.js';
@@ -36,6 +37,8 @@ export interface DirectUnitResult {
   tools: number;
   maxSequence: number;
   legacyOk: boolean;
+  /** Nodes sent to /api/v1/entities/embed/batch (best-effort). */
+  embedded: number;
   /** New session_end count floor to persist (never lower than the prior floor). */
   sessionMessageCount: number;
   sessionToolCallCount: number;
@@ -87,6 +90,10 @@ export async function writeDirectUnit(input: DirectUnitInput): Promise<DirectUni
     }
   }
 
+  // Embed explicit text regardless of graphOk: failed batches are queued and
+  // will land, and embedding rows are keyed by the same deterministic ids.
+  const embedded = await embedTargets(config.api_url, auth, collectEmbedTargets(operations), claudeSessionId);
+
   let messages = 0;
   let tools = 0;
   let maxSequence = input.legacyStreamMaxSequence;
@@ -117,7 +124,7 @@ export async function writeDirectUnit(input: DirectUnitInput): Promise<DirectUni
     }
   }
 
-  return { ops: operations.length, graphOk, artifactOk: artifactResult.ok, artifacts: artifactResult.attempted, messages, tools, maxSequence, legacyOk, sessionMessageCount, sessionToolCallCount };
+  return { ops: operations.length, graphOk, artifactOk: artifactResult.ok, artifacts: artifactResult.attempted, messages, tools, maxSequence, legacyOk, embedded, sessionMessageCount, sessionToolCallCount };
 }
 
 export interface GatewayUnitInput {

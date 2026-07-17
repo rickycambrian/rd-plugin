@@ -14,6 +14,7 @@ import { claudeCodeSessionNodeId, type ClaudeCodeHookTrace } from 'rickydata/kfd
 import { RD_AGENT_ID } from './lib/trace.js';
 import { writeGraph } from './lib/graph.js';
 import { buildPlanOperations, buildSessionStubOperation } from './lib/plan.js';
+import { collectEmbedTargets, embedTargets, type EmbedTarget } from './lib/embed.js';
 import type { KfdbAuth } from './lib/kfdb-auth.js';
 
 const USAGE = `usage: node backfill.mjs [--since <ISO-date>] [--limit <n>] [--sleep <ms>] [--plans]
@@ -107,6 +108,9 @@ const MAX_PLAN_CONTENT_BYTES = 1_000_000;
 async function runPlansPass(opts: { apiUrl: string; auth: KfdbAuth; walletAddress: string; sleepMs: number }): Promise<void> {
   const { apiUrl, auth, walletAddress, sleepMs } = opts;
   let sessionsWithPlans = 0;
+  // Accumulate embed targets across the whole pass; last write wins per node,
+  // so the disk sweep's fresher plan body replaces the transcript-derived one.
+  const embedMap = new Map<string, EmbedTarget>();
 
   for (const session of collectSessionFiles()) {
     let raw: string;
@@ -131,6 +135,7 @@ async function runPlansPass(opts: { apiUrl: string; auth: KfdbAuth; walletAddres
     ];
     try {
       await writeGraph(apiUrl, auth, operations);
+      for (const t of collectEmbedTargets(operations)) embedMap.set(`${t.label}:${t.node_id}`, t);
       sessionsWithPlans += 1;
       process.stdout.write(`  plans: ${claudeSessionId} — ${summary.plans.length} plan(s), ${operations.length} ops\n`);
     } catch (err) {
@@ -156,6 +161,7 @@ async function runPlansPass(opts: { apiUrl: string; auth: KfdbAuth; walletAddres
       const content = fs.readFileSync(planFilePath, 'utf8');
       const operations = buildPlanOperations([{ planFilePath, content, updatedAt: Math.round(stat.mtimeMs) }]);
       await writeGraph(apiUrl, auth, operations);
+      for (const t of collectEmbedTargets(operations)) embedMap.set(`${t.label}:${t.node_id}`, t);
       swept += 1;
     } catch (err) {
       log('warn', 'plans sweep file failed', { file: dirent.name, error: (err as Error).message });
@@ -163,7 +169,8 @@ async function runPlansPass(opts: { apiUrl: string; auth: KfdbAuth; walletAddres
     if (sleepMs > 0) await sleep(sleepMs);
   }
 
-  process.stdout.write(`backfill --plans: done, ${sessionsWithPlans} session(s) linked, ${swept} plan file(s) swept\n`);
+  const embedded = await embedTargets(apiUrl, auth, [...embedMap.values()]);
+  process.stdout.write(`backfill --plans: done, ${sessionsWithPlans} session(s) linked, ${swept} plan file(s) swept, ${embedded} node(s) embedded\n`);
 }
 
 async function main(): Promise<void> {

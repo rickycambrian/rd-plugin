@@ -4834,6 +4834,45 @@ async function writeContentArtifacts(config, auth, artifacts) {
   return result;
 }
 
+// src/lib/embed.ts
+var EMBED_TEXT_MAX = 8e3;
+var EMBED_BATCH_MAX = 100;
+var EMBED_TIMEOUT_MS = 6e4;
+var EMBED_TEXT_PROPERTY = {
+  Plan: "content",
+  ClaudeCodeSession: "initial_prompt",
+  CodeCommand: "command_preview"
+};
+function collectEmbedTargets(operations) {
+  const byKey = /* @__PURE__ */ new Map();
+  for (const op of operations) {
+    if (op.operation !== "create_node" || typeof op.label !== "string") continue;
+    const prop = EMBED_TEXT_PROPERTY[op.label];
+    if (!prop) continue;
+    const props = op.properties;
+    const raw = props?.[prop]?.String;
+    if (typeof raw !== "string" || !raw.trim()) continue;
+    byKey.set(`${op.label}:${op.id}`, { label: op.label, node_id: String(op.id), text: raw.slice(0, EMBED_TEXT_MAX) });
+  }
+  return [...byKey.values()];
+}
+async function embedTargets(apiUrl, auth, targets, sessionId) {
+  if (targets.length === 0 || !auth.deriveHeaders) return 0;
+  const url = `${apiUrl.replace(/\/$/, "")}/api/v1/entities/embed/batch`;
+  let embedded = 0;
+  for (let i = 0; i < targets.length; i += EMBED_BATCH_MAX) {
+    const entities = targets.slice(i, i + EMBED_BATCH_MAX);
+    try {
+      const result = await postJson(url, { entities }, kfdbAuthHeaders(auth, "POST", url), EMBED_TIMEOUT_MS);
+      if (result.ok) embedded += entities.length;
+      else log("warn", "embed batch failed", { sessionId, status: result.status, count: entities.length });
+    } catch (err) {
+      log("warn", "embed batch error", { sessionId, error: err.message, count: entities.length });
+    }
+  }
+  return embedded;
+}
+
 // src/codex/spool.ts
 import path7 from "node:path";
 
@@ -4949,6 +4988,7 @@ async function writeCodexDirectUnit(input) {
       log("warn", "codex graph batch error; queued", { sessionId: codexSessionId, error: err.message });
     }
   }
+  await embedTargets(config.api_url, auth, collectEmbedTargets(operations), codexSessionId);
   return { ops: operations.length, graphOk, artifactOk: artifactResult.ok, artifacts: artifactResult.attempted };
 }
 function writeCodexGatewayUnit(input) {
