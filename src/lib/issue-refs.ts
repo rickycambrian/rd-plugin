@@ -25,12 +25,12 @@ export interface RefContext {
 
 const OWNER_REPO = /([A-Za-z0-9][-A-Za-z0-9_.]*)\/([A-Za-z0-9][-A-Za-z0-9_.]*)#(\d+)/g;
 const ISSUE_URL = /https?:\/\/github\.com\/([^/\s#]+)\/([^/\s#]+)\/issues\/(\d+)/gi;
-// Bare #N: the char before `#` must not be a word char, `/`, or `#` so we do not
-// re-match the `#N` tail of owner/repo#N (or ##).
-const BARE = /(?<![\w/#])#(\d+)/g;
-// slug issue-<repo>-<N>. Greedy repo backtracks to the LAST `-<digits>` boundary,
-// so issue-rd-plugin-42 -> repo=rd-plugin, number=42.
-const SLUG = /\bissue-([a-z0-9][-a-z0-9_.]*)-(\d+)\b/gi;
+// Bare #N: the char before `#` must not be a word char, `/`, `#`, or `&` so we do
+// not re-match the `#N` tail of owner/repo#N (or ##) or an HTML entity like `&#123;`.
+const BARE = /(?<![\w/#&])#(\d+)/g;
+// slug issue-<repo>-<N>. Non-greedy repo takes the FIRST `-<digits>` boundary
+// (matches home's parser): issue-a-1-2 -> repo=a,num=1; issue-rd-plugin-42 -> repo=rd-plugin,num=42.
+const SLUG = /\bissue-([a-z0-9][-a-z0-9_.]*?)-(\d+)\b/gi;
 
 /** ponytail: naive code strip -- ``` / ~~~ fenced blocks then `inline` spans; malformed/nested/unbalanced fall through. */
 function stripCode(text: string): string {

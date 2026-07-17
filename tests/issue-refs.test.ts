@@ -53,6 +53,16 @@ describe('extractIssueRefs', () => {
     expect(refs).toEqual([{ owner: 'acme', repo: 'widgets', number: 5, tier: 'explicit_ref' }]);
   });
 
+  it('does not treat an HTML numeric entity as a bare ref', () => {
+    expect(extractIssueRefs('html entity &#123; escaped', ctx)).toEqual([]);
+  });
+
+  it('matches home on a multi-number slug (non-greedy repo, first -digits)', () => {
+    expect(extractIssueRefs('issue-a-1-2', ctx)).toEqual([
+      { owner: undefined, repo: 'a', number: 1, tier: 'slug_branch' },
+    ]);
+  });
+
   it('drops a bare #N when there is no repo context to attribute it to', () => {
     expect(extractIssueRefs('orphan #5', {})).toEqual([]);
   });
