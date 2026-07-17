@@ -12,6 +12,8 @@ export interface ArtifactWriteResult {
   ok: boolean;
 }
 
+const ARTIFACT_WRITE_CONCURRENCY = 4;
+
 /** Persist exact content before graph references; failures are durably queued. */
 export async function writeContentArtifacts(
   config: RdConfig,
@@ -21,39 +23,45 @@ export async function writeContentArtifacts(
   const unique = [...new Map(artifacts.map((artifact) => [artifact.key, artifact])).values()];
   const url = `${config.api_url.replace(/\/$/, '')}/api/v1/kv`;
   const result: ArtifactWriteResult = { attempted: unique.length, persisted: 0, queued: 0, ok: true };
-  for (const artifact of unique) {
-    const body = { key: artifact.key, value: artifact.value, if_absent: true };
-    const queuedRequest = {
-      url,
-      method: 'PUT' as const,
-      body,
-      requiresBearer: true,
-      requiresDerive: true,
-      dedupeKey: `content-artifact:${artifact.key}`,
-    };
-    if (!auth.deriveHeaders) {
-      enqueue(queuedRequest);
-      result.queued += 1;
-      result.ok = false;
-      continue;
-    }
-    try {
-      // Headers signed per request: ERC-8128 nonces are single-use.
-      const response = await putJson(url, body, kfdbAuthHeaders(auth, 'PUT', url), 60_000);
-      if (response.ok || response.status === 409) {
-        result.persisted += 1;
-      } else {
+  let nextIndex = 0;
+  async function worker(): Promise<void> {
+    while (nextIndex < unique.length) {
+      const artifact = unique[nextIndex];
+      nextIndex += 1;
+      const body = { key: artifact.key, value: artifact.value, if_absent: true };
+      const queuedRequest = {
+        url,
+        method: 'PUT' as const,
+        body,
+        requiresBearer: true,
+        requiresDerive: true,
+        dedupeKey: `content-artifact:${artifact.key}`,
+      };
+      if (!auth.deriveHeaders) {
         enqueue(queuedRequest);
         result.queued += 1;
         result.ok = false;
-        log('warn', 'content artifact write failed; queued', { key: artifact.key, status: response.status });
+        continue;
       }
-    } catch (error) {
-      enqueue(queuedRequest);
-      result.queued += 1;
-      result.ok = false;
-      log('warn', 'content artifact write error; queued', { key: artifact.key, error: (error as Error).message });
+      try {
+        // Headers signed per request: ERC-8128 nonces are single-use.
+        const response = await putJson(url, body, kfdbAuthHeaders(auth, 'PUT', url), 60_000);
+        if (response.ok || response.status === 409) {
+          result.persisted += 1;
+        } else {
+          enqueue(queuedRequest);
+          result.queued += 1;
+          result.ok = false;
+          log('warn', 'content artifact write failed; queued', { key: artifact.key, status: response.status });
+        }
+      } catch (error) {
+        enqueue(queuedRequest);
+        result.queued += 1;
+        result.ok = false;
+        log('warn', 'content artifact write error; queued', { key: artifact.key, error: (error as Error).message });
+      }
     }
   }
+  await Promise.all(Array.from({ length: Math.min(ARTIFACT_WRITE_CONCURRENCY, unique.length) }, worker));
   return result;
 }
