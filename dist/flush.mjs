@@ -4752,7 +4752,7 @@ function buildTraces(input) {
 var OWNER_REPO = /([A-Za-z0-9][-A-Za-z0-9_.]*)\/([A-Za-z0-9][-A-Za-z0-9_.]*)#(\d+)/g;
 var ISSUE_URL = /https?:\/\/github\.com\/([^/\s#]+)\/([^/\s#]+)\/issues\/(\d+)/gi;
 var BARE = /(?<![\w/#&])#(\d+)/g;
-var SLUG = /\bissue-([a-z0-9][-a-z0-9_.]*?)-(\d+)\b/gi;
+var SLUG = /\bissue-([a-z0-9][-a-z0-9_.]*)-(\d+)\b/gi;
 function stripCode(text) {
   return text.replace(/```[\s\S]*?```/g, " ").replace(/~~~[\s\S]*?~~~/g, " ").replace(/`[^`]*`/g, " ");
 }

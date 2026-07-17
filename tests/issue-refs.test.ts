@@ -57,9 +57,9 @@ describe('extractIssueRefs', () => {
     expect(extractIssueRefs('html entity &#123; escaped', ctx)).toEqual([]);
   });
 
-  it('matches home on a multi-number slug (non-greedy repo, first -digits)', () => {
+  it('matches home on a multi-number slug (greedy repo, trailing -digits is the number)', () => {
     expect(extractIssueRefs('issue-a-1-2', ctx)).toEqual([
-      { owner: undefined, repo: 'a', number: 1, tier: 'slug_branch' },
+      { owner: undefined, repo: 'a-1', number: 2, tier: 'slug_branch' },
     ]);
   });
 

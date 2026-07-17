@@ -28,9 +28,10 @@ const ISSUE_URL = /https?:\/\/github\.com\/([^/\s#]+)\/([^/\s#]+)\/issues\/(\d+)
 // Bare #N: the char before `#` must not be a word char, `/`, `#`, or `&` so we do
 // not re-match the `#N` tail of owner/repo#N (or ##) or an HTML entity like `&#123;`.
 const BARE = /(?<![\w/#&])#(\d+)/g;
-// slug issue-<repo>-<N>. Non-greedy repo takes the FIRST `-<digits>` boundary
-// (matches home's parser): issue-a-1-2 -> repo=a,num=1; issue-rd-plugin-42 -> repo=rd-plugin,num=42.
-const SLUG = /\bissue-([a-z0-9][-a-z0-9_.]*?)-(\d+)\b/gi;
+// slug issue-<repo>-<N>. Greedy repo: the trailing `-<digits>` is the issue
+// number, repo is everything before it (matches home's SLUG_RE):
+// issue-a-1-2 -> repo=a-1,num=2; issue-rd-plugin-42 -> repo=rd-plugin,num=42.
+const SLUG = /\bissue-([a-z0-9][-a-z0-9_.]*)-(\d+)\b/gi;
 
 /** ponytail: naive code strip -- ``` / ~~~ fenced blocks then `inline` spans; malformed/nested/unbalanced fall through. */
 function stripCode(text: string): string {
