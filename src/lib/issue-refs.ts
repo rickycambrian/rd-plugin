@@ -32,9 +32,12 @@ const BARE = /(?<![\w/#])#(\d+)/g;
 // so issue-rd-plugin-42 -> repo=rd-plugin, number=42.
 const SLUG = /\bissue-([a-z0-9][-a-z0-9_.]*)-(\d+)\b/gi;
 
-/** ponytail: naive fenced strip -- matched ``` / ~~~ regions only; malformed or nested fences fall through. */
-function stripFences(text: string): string {
-  return text.replace(/```[\s\S]*?```/g, ' ').replace(/~~~[\s\S]*?~~~/g, ' ');
+/** ponytail: naive code strip -- ``` / ~~~ fenced blocks then `inline` spans; malformed/nested/unbalanced fall through. */
+function stripCode(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/~~~[\s\S]*?~~~/g, ' ')
+    .replace(/`[^`]*`/g, ' ');
 }
 
 function keyOf(ref: IssueRef): string {
@@ -46,7 +49,7 @@ function keyOf(ref: IssueRef): string {
  * attribution context. Explicit-tier refs win over slug-tier for the same issue.
  */
 export function extractIssueRefs(prompt: string, ctx: RefContext = {}): IssueRef[] {
-  const text = stripFences(typeof prompt === 'string' ? prompt : '');
+  const text = stripCode(typeof prompt === 'string' ? prompt : '');
   const byKey = new Map<string, IssueRef>();
 
   const add = (ref: IssueRef): void => {

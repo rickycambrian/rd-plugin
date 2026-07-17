@@ -27,8 +27,8 @@ describe('extractIssueRefs', () => {
     expect(refs).toEqual([{ owner: 'acme', repo: 'widgets', number: 42, tier: 'explicit_ref' }]);
   });
 
-  it('ignores refs inside fenced code blocks', () => {
-    const prompt = 'real #1 here\n```\ncode #999 ignore\n```\n~~~\nmore #888 ignore\n~~~';
+  it('ignores refs inside fenced (``` and ~~~) and inline code', () => {
+    const prompt = 'real #1 here\n```\ncode #999 ignore\n```\n~~~\nmore #888 ignore\n~~~\ninline `#777 ignore` too';
     const refs = extractIssueRefs(prompt, ctx);
     expect(refs).toEqual([{ owner: 'rickydata-indexer', repo: 'rd-plugin', number: 1, tier: 'explicit_ref' }]);
   });
