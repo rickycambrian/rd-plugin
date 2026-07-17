@@ -77,6 +77,23 @@ describe('codex trace grouping', () => {
     expect(t[0].repository).toEqual(expect.objectContaining({ fullName: 'rickycambrian/repo', branch: 'main', commitSha: 'a'.repeat(40) }));
   });
 
+  it('rebuilds only turns affected after the durable sequence checkpoint', () => {
+    const input = { walletAddress: WALLET, agentId: AGENT, codexSessionId: 'cx-session-1', events: codexEvents() };
+
+    const currentTurnAndLater = buildCodexTraces(input, 1);
+    expect(currentTurnAndLater.map((trace) => [trace.turnIndex, trace.turnId, trace.events.map((event) => event.sequence)])).toEqual([
+      [1, 't1', [0, 1, 2]],
+      [2, 't2', [3, 4, 5]],
+    ]);
+
+    const nextTurnOnly = buildCodexTraces(input, 2);
+    expect(nextTurnOnly.map((trace) => [trace.turnIndex, trace.turnId, trace.events.map((event) => event.sequence)])).toEqual([
+      [2, 't2', [3, 4, 5]],
+    ]);
+
+    expect(buildCodexTraces(input, 5)).toEqual([]);
+  });
+
   it('chooses repository state per turn instead of collapsing the session to its first commit', () => {
     const events = codexEvents();
     for (const event of events.slice(0, 3)) Object.assign(event, {

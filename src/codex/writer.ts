@@ -17,6 +17,7 @@ export interface CodexDirectUnitInput {
   auth: KfdbAuth;
   codexSessionId: string;
   events: CodexPendingEvent[];
+  afterSequence?: number;
 }
 
 export interface CodexDirectUnitResult {
@@ -34,9 +35,9 @@ export interface CodexDirectUnitResult {
  * CodexSession family replaces it (SPEC-000 WS-F ruling, Option A).
  */
 export async function writeCodexDirectUnit(input: CodexDirectUnitInput): Promise<CodexDirectUnitResult> {
-  const { config, walletAddress, agentId, auth, codexSessionId, events } = input;
+  const { config, walletAddress, agentId, auth, codexSessionId, events, afterSequence } = input;
   const deriveHeaders = auth.deriveHeaders;
-  const traces = buildCodexTraces({ walletAddress, agentId, codexSessionId, events });
+  const traces = buildCodexTraces({ walletAddress, agentId, codexSessionId, events }, afterSequence);
   const bundle = buildCodexGraphWriteBundle(walletAddress, traces);
   const operations = bundle.operations;
   const writeUrl = `${config.api_url.replace(/\/$/, '')}/api/v1/write`;
@@ -78,6 +79,7 @@ export interface CodexGatewayUnitInput {
   agentId: string;
   codexSessionId: string;
   events: CodexPendingEvent[];
+  afterSequence?: number;
 }
 
 /** Write one Codex flush unit to the gateway sink as spool files (no network). */
@@ -87,6 +89,6 @@ export function writeCodexGatewayUnit(input: CodexGatewayUnitInput): string[] {
     agentId: input.agentId,
     codexSessionId: input.codexSessionId,
     events: input.events,
-  });
+  }, input.afterSequence);
   return writeCodexSpool(input.spoolDir, traces);
 }

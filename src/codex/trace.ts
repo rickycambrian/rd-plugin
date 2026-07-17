@@ -58,12 +58,13 @@ export interface BuildCodexTracesInput {
  * deterministic and idempotent across re-flushes. Session/turn scalars
  * (model, cwd) fall back to session-wide values when a turn omits them.
  */
-export function buildCodexTraces(input: BuildCodexTracesInput): CodexHookTrace[] {
+export function buildCodexTraces(input: BuildCodexTracesInput, afterSequence?: number): CodexHookTrace[] {
   const { walletAddress, agentId, codexSessionId, events } = input;
   const groups = groupTurns(events);
   const sessionModel = firstDefined(events.map((e) => e.model));
   const sessionCwd = firstDefined(events.map((e) => e.cwd));
-  return groups.map((group, index) => {
+  return groups.flatMap((group, index) => {
+    if (afterSequence !== undefined && !group.events.some((event) => event.sequence > afterSequence)) return [];
     const turnIndex = index + 1;
     const turnId = group.turnId ?? `${codexSessionId}-turn-${turnIndex}`;
     const model = firstDefined([...group.events.map((e) => e.model), sessionModel]);
@@ -98,6 +99,6 @@ export function buildCodexTraces(input: BuildCodexTracesInput): CodexHookTrace[]
     const sourceIntentRef = firstDefined(group.events.map((event) => event.sourceIntentRef));
     if (workContract) trace.workContract = workContract;
     if (sourceIntentRef) trace.sourceIntentRef = sourceIntentRef;
-    return trace;
+    return [trace];
   });
 }

@@ -45,11 +45,12 @@ describe('state locked read-merge-write', () => {
 
   it('commitFlushedEntry merges into an existing entry for the same session', async () => {
     resetState();
-    await commitFlushedEntry('session-a', { legacyStreamMaxSequence: 7 });
+    await commitFlushedEntry('session-a', { legacyStreamMaxSequence: 7, codexMaxSequence: 11 });
     await commitFlushedEntry('session-a', { fingerprint: 'fp-a' });
     const entry = readState().flushed['session-a'];
     expect(entry?.fingerprint).toBe('fp-a');
     expect(entry?.legacyStreamMaxSequence).toBe(7);
+    expect(entry?.codexMaxSequence).toBe(11);
     expect(entry?.updatedAt).toBeTruthy();
   });
 

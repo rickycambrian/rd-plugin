@@ -60,20 +60,23 @@ export async function runCodexFlush(
     const fingerprint = codexFingerprint(codexSessionId, sink, events);
     const state = readState();
     const prior = flushedEntry(state, codexSessionId);
-    if (prior.fingerprint === fingerprint && !opts.final) {
-      // Refresh updatedAt so the recovery sweep stops re-selecting this log.
-      await commitFlushedEntry(codexSessionId, {});
+    const maxSequence = events[events.length - 1]?.sequence;
+    if (prior.fingerprint === fingerprint) {
+      // Seed the sequence checkpoint for pre-incremental state and refresh
+      // updatedAt so the recovery sweep stops re-selecting this log.
+      await commitFlushedEntry(codexSessionId, { codexMaxSequence: maxSequence });
+      if (opts.final) clearCodexPending(codexSessionId);
       log('debug', 'codex flush skipped: unchanged fingerprint', { sessionId: codexSessionId });
       return;
     }
 
     if (sink === 'gateway') {
-      flushCodexGateway(codexSessionId, events, env);
+      flushCodexGateway(codexSessionId, events, prior.codexMaxSequence, env);
     } else {
-      await flushCodexDirect(config, codexSessionId, events);
+      await flushCodexDirect(config, codexSessionId, events, prior.codexMaxSequence);
     }
 
-    setFlushedEntry(state, codexSessionId, { fingerprint });
+    setFlushedEntry(state, codexSessionId, { fingerprint, codexMaxSequence: maxSequence });
     // Locked read-merge-write — see commitFlushedEntry; whole-file writeState()
     // here loses concurrent sessions' entries.
     await commitFlushedEntry(codexSessionId, flushedEntry(state, codexSessionId));
@@ -84,14 +87,21 @@ export async function runCodexFlush(
   }
 }
 
-function flushCodexGateway(codexSessionId: string, events: CodexPendingEvent[], env: NodeJS.ProcessEnv): void {
+function flushCodexGateway(
+  codexSessionId: string,
+  events: CodexPendingEvent[],
+  afterSequence: number | undefined,
+  env: NodeJS.ProcessEnv,
+): void {
   const spoolDir = env.RD_SPOOL_DIR;
   if (!spoolDir) {
     log('warn', 'codex gateway sink but RD_SPOOL_DIR unset', { sessionId: codexSessionId });
     return;
   }
   const walletAddress = (env.RD_WALLET_ADDRESS || '').toLowerCase();
-  const written = writeCodexGatewayUnit({ spoolDir, walletAddress, agentId: RD_CODEX_AGENT_ID, codexSessionId, events });
+  const written = writeCodexGatewayUnit({
+    spoolDir, walletAddress, agentId: RD_CODEX_AGENT_ID, codexSessionId, events, afterSequence,
+  });
   log('info', 'codex gateway spool written', { sessionId: codexSessionId, files: written.length });
 }
 
@@ -99,6 +109,7 @@ async function flushCodexDirect(
   config: ReturnType<typeof loadConfig>,
   codexSessionId: string,
   events: CodexPendingEvent[],
+  afterSequence: number | undefined,
 ): Promise<void> {
   if (!config.private_key) {
     log('warn', 'codex direct sink but no private_key', { sessionId: codexSessionId });
@@ -128,6 +139,7 @@ async function flushCodexDirect(
     auth,
     codexSessionId,
     events,
+    afterSequence,
   });
   log('info', 'codex flush direct complete', {
     sessionId: codexSessionId,

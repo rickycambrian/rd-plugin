@@ -4722,12 +4722,13 @@ function repositoryForEvent(event) {
     dirtyStateHash: event.repoDirtyStateHash
   };
 }
-function buildCodexTraces(input) {
+function buildCodexTraces(input, afterSequence) {
   const { walletAddress, agentId, codexSessionId, events } = input;
   const groups = groupTurns(events);
   const sessionModel = firstDefined(events.map((e) => e.model));
   const sessionCwd = firstDefined(events.map((e) => e.cwd));
-  return groups.map((group, index) => {
+  return groups.flatMap((group, index) => {
+    if (afterSequence !== void 0 && !group.events.some((event) => event.sequence > afterSequence)) return [];
     const turnIndex = index + 1;
     const turnId = group.turnId ?? `${codexSessionId}-turn-${turnIndex}`;
     const model = firstDefined([...group.events.map((e) => e.model), sessionModel]);
@@ -4763,7 +4764,7 @@ function buildCodexTraces(input) {
     const sourceIntentRef = firstDefined(group.events.map((event) => event.sourceIntentRef));
     if (workContract) trace.workContract = workContract;
     if (sourceIntentRef) trace.sourceIntentRef = sourceIntentRef;
-    return trace;
+    return [trace];
   });
 }
 
@@ -4921,9 +4922,9 @@ function writeCodexSpool(spoolDir, traces) {
 
 // src/codex/writer.ts
 async function writeCodexDirectUnit(input) {
-  const { config, walletAddress, agentId, auth, codexSessionId, events } = input;
+  const { config, walletAddress, agentId, auth, codexSessionId, events, afterSequence } = input;
   const deriveHeaders = auth.deriveHeaders;
-  const traces = buildCodexTraces({ walletAddress, agentId, codexSessionId, events });
+  const traces = buildCodexTraces({ walletAddress, agentId, codexSessionId, events }, afterSequence);
   const bundle = buildCodexGraphWriteBundle(walletAddress, traces);
   const operations = bundle.operations;
   const writeUrl = `${config.api_url.replace(/\/$/, "")}/api/v1/write`;
@@ -4959,7 +4960,7 @@ function writeCodexGatewayUnit(input) {
     agentId: input.agentId,
     codexSessionId: input.codexSessionId,
     events: input.events
-  });
+  }, input.afterSequence);
   return writeCodexSpool(input.spoolDir, traces);
 }
 
@@ -4991,34 +4992,43 @@ async function runCodexFlush(codexSessionId, opts, env = process.env) {
     const fingerprint = codexFingerprint(codexSessionId, sink, events);
     const state = readState();
     const prior = flushedEntry(state, codexSessionId);
-    if (prior.fingerprint === fingerprint && !opts.final) {
-      await commitFlushedEntry(codexSessionId, {});
+    const maxSequence = events[events.length - 1]?.sequence;
+    if (prior.fingerprint === fingerprint) {
+      await commitFlushedEntry(codexSessionId, { codexMaxSequence: maxSequence });
+      if (opts.final) clearCodexPending(codexSessionId);
       log("debug", "codex flush skipped: unchanged fingerprint", { sessionId: codexSessionId });
       return;
     }
     if (sink === "gateway") {
-      flushCodexGateway(codexSessionId, events, env);
+      flushCodexGateway(codexSessionId, events, prior.codexMaxSequence, env);
     } else {
-      await flushCodexDirect(config, codexSessionId, events);
+      await flushCodexDirect(config, codexSessionId, events, prior.codexMaxSequence);
     }
-    setFlushedEntry(state, codexSessionId, { fingerprint });
+    setFlushedEntry(state, codexSessionId, { fingerprint, codexMaxSequence: maxSequence });
     await commitFlushedEntry(codexSessionId, flushedEntry(state, codexSessionId));
     if (opts.final) clearCodexPending(codexSessionId);
   } finally {
     releaseFlushLock(CODEX_PENDING_DIR, codexSessionId);
   }
 }
-function flushCodexGateway(codexSessionId, events, env) {
+function flushCodexGateway(codexSessionId, events, afterSequence, env) {
   const spoolDir = env.RD_SPOOL_DIR;
   if (!spoolDir) {
     log("warn", "codex gateway sink but RD_SPOOL_DIR unset", { sessionId: codexSessionId });
     return;
   }
   const walletAddress = (env.RD_WALLET_ADDRESS || "").toLowerCase();
-  const written = writeCodexGatewayUnit({ spoolDir, walletAddress, agentId: RD_CODEX_AGENT_ID, codexSessionId, events });
+  const written = writeCodexGatewayUnit({
+    spoolDir,
+    walletAddress,
+    agentId: RD_CODEX_AGENT_ID,
+    codexSessionId,
+    events,
+    afterSequence
+  });
   log("info", "codex gateway spool written", { sessionId: codexSessionId, files: written.length });
 }
-async function flushCodexDirect(config, codexSessionId, events) {
+async function flushCodexDirect(config, codexSessionId, events, afterSequence) {
   if (!config.private_key) {
     log("warn", "codex direct sink but no private_key", { sessionId: codexSessionId });
     return;
@@ -5044,7 +5054,8 @@ async function flushCodexDirect(config, codexSessionId, events) {
     agentId: RD_CODEX_AGENT_ID,
     auth,
     codexSessionId,
-    events
+    events,
+    afterSequence
   });
   log("info", "codex flush direct complete", {
     sessionId: codexSessionId,

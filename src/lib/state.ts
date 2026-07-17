@@ -7,6 +7,8 @@ import type { PendingEvent } from './event.js';
 export interface FlushedEntry {
   /** Fingerprint of the last successfully flushed unit (sessionId + events + sink). */
   fingerprint?: string;
+  /** Highest Codex pending-event sequence durably written or queued. */
+  codexMaxSequence?: number;
   /** Highest pending sequence already streamed to the legacy endpoints. */
   legacyStreamMaxSequence?: number;
   /**
