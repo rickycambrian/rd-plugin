@@ -12,6 +12,7 @@ import { loadCodexRepoOwners, RD_CODEX_AGENT_ID } from '../src/codex/config.js';
 import { parseGitHubRemote, ownedRepository } from '../src/codex/repo.js';
 import { runCodexCapture } from '../src/codex/capture-core.js';
 import { readCodexPending } from '../src/codex/pending.js';
+import { codexPendingFileFor } from '../src/codex/paths.js';
 import { codexFingerprint, recoverCodexMaxSequence } from '../src/codex/flush-core.js';
 import type { CodexPendingEvent } from '../src/codex/event.js';
 import type { HookInput } from '../src/lib/hook-input.js';
@@ -251,6 +252,32 @@ describe('codex capture owner-gate', () => {
     const res = await runCodexCapture(input({ session_id: sid, prompt: 'hi' }), directEnv, owned);
     expect(res).toEqual({ codexSessionId: sid, shouldFlush: false });
     expect(readCodexPending(sid)).toHaveLength(1);
+  });
+
+  it('arms and closes signed Git provenance with Codex identity and transcript semantics', async () => {
+    const sid = 'cx-cap-git-lifecycle';
+    const calls: Array<{ kind: string; input: HookInput; env: NodeJS.ProcessEnv; transcript?: string }> = [];
+    const arm = (hook: HookInput, env: NodeJS.ProcessEnv) => {
+      calls.push({ kind: 'arm', input: hook, env });
+      return { status: 'started' as const, binary: 'rickygit' };
+    };
+    const close = (hook: HookInput, transcript: string, env: NodeJS.ProcessEnv) => {
+      calls.push({ kind: 'close', input: hook, env, transcript });
+      return { status: 'started' as const };
+    };
+
+    await runCodexCapture(input({ session_id: sid, prompt: 'Exact Codex objective.' }), directEnv, owned, arm, close);
+    await runCodexCapture(input({ session_id: sid, hook_event_name: 'Stop' }), directEnv, owned, arm, close);
+
+    expect(calls.map((call) => call.kind)).toEqual(['arm', 'close']);
+    expect(calls[0].env).toMatchObject({
+      RICKYDATA_AGENT_ID: 'agent:ricky-codex',
+      RICKYDATA_HARNESS: 'codex',
+      RICKYDATA_SESSION_FORMAT: 'codex-hooks.jsonl.v1',
+      RICKYDATA_AUTO_INIT: 'true',
+    });
+    expect(calls[1].transcript).toBe(codexPendingFileFor(sid));
+    expect(readCodexPending(sid)[0]?.workProvenance?.gitArm).toEqual({ status: 'started', binary: 'rickygit' });
   });
 
   it('captures nothing for a non-owned repo', async () => {

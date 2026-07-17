@@ -31,6 +31,11 @@ export type RickygitArmResult =
       detail: string;
     };
 
+export type RickygitSessionCaptureResult =
+  | { status: 'not_applicable' }
+  | { status: 'started' }
+  | { status: 'rejected'; detail: string };
+
 /** Exact payload accepted by rickydata_git's idempotent session-state adapter. */
 export function rickygitArmRequest(input: HookInput, env: NodeJS.ProcessEnv = process.env): RickygitArmRequest | null {
   if (input.hook_event_name !== 'UserPromptSubmit') return null;
@@ -63,6 +68,14 @@ export function resolveRickygitSessionStartScript(env: NodeJS.ProcessEnv = proce
   const candidates = [
     str(env.RICKYGIT_SESSION_START_SCRIPT),
     path.join(os.homedir(), 'Documents/github/rickydata_git/scripts/rickygit-session-start.sh'),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
+export function resolveRickygitSessionCaptureScript(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const candidates = [
+    str(env.RICKYGIT_SESSION_CAPTURE_SCRIPT),
+    path.join(os.homedir(), 'Documents/github/rickydata_git/scripts/rickygit-session-capture.sh'),
   ].filter((candidate): candidate is string => Boolean(candidate));
   return candidates.find((candidate) => fs.existsSync(candidate));
 }
@@ -143,5 +156,34 @@ export function spawnRickygitArm(input: HookInput, env: NodeJS.ProcessEnv = proc
       missingFlags: [],
       detail: error instanceof Error ? error.message : 'detached adapter spawn failed',
     };
+  }
+}
+
+/** Fire-and-forget terminal capture using the same session state armed above. */
+export function spawnRickygitSessionCapture(
+  input: HookInput,
+  transcriptPath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): RickygitSessionCaptureResult {
+  const script = resolveRickygitSessionCaptureScript(env);
+  if (input.hook_event_name !== 'Stop' || !str(input.session_id) || !fs.existsSync(transcriptPath) || !script) {
+    return { status: 'not_applicable' };
+  }
+  try {
+    const child = spawn('bash', [
+      '-c',
+      'printf %s "$1" | bash "$2"',
+      'rickydata-git-capture',
+      JSON.stringify({ ...input, transcript_path: transcriptPath }),
+      script,
+    ], {
+      detached: true,
+      stdio: 'ignore',
+      env,
+    });
+    child.unref();
+    return { status: 'started' };
+  } catch (error) {
+    return { status: 'rejected', detail: error instanceof Error ? error.message : 'detached adapter spawn failed' };
   }
 }

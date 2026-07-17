@@ -1,8 +1,8 @@
 // rd-plugin bundled output — do not edit; regenerate via `npm run build`.
 
 // src/codex-capture.ts
-import { spawn } from "node:child_process";
-import path4 from "node:path";
+import { spawn as spawn2 } from "node:child_process";
+import path5 from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/lib/hook-input.ts
@@ -401,8 +401,149 @@ function appendCodexPending(codexSessionId, event) {
 `, { mode: 384 });
 }
 
+// src/lib/rickygit-arm.ts
+import { spawn, spawnSync } from "node:child_process";
+import fs5 from "node:fs";
+import os2 from "node:os";
+import path4 from "node:path";
+function str3(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : void 0;
+}
+function exactText2(value) {
+  return typeof value === "string" && value.trim() ? value : void 0;
+}
+var RICKYGIT_PREFLIGHT_DIAGNOSTIC = "RICKYGIT_PROVENANCE_PREFLIGHT_REJECTED";
+function rickygitArmRequest(input, env = process.env) {
+  if (input.hook_event_name !== "UserPromptSubmit") return null;
+  const objective = exactText2(input.prompt);
+  const sessionId = str3(input.session_id);
+  if (!objective || !sessionId) return null;
+  const refs = workProvenanceRefs(input, env);
+  const packId = str3(input.context_pack_id) ?? str3(input.decision_pack_id) ?? str3(env.RICKYDATA_DECISION_PACK_ID);
+  const packHash = str3(input.context_pack_hash) ?? str3(input.decision_pack_hash) ?? str3(env.RICKYDATA_DECISION_PACK_HASH);
+  return {
+    event: {
+      session_id: sessionId,
+      ...str3(input.cwd) ? { cwd: str3(input.cwd) } : {},
+      source: "startup",
+      objective,
+      ...str3(input.model) ? { model: str3(input.model) } : {}
+    },
+    env: {
+      RICKYDATA_OBJECTIVE: objective,
+      ...refs.sourceIntentRef ? { RICKYDATA_SOURCE_INTENT_REF: refs.sourceIntentRef } : {},
+      ...packId && packHash ? {
+        RICKYDATA_DECISION_PACK_ID: packId,
+        RICKYDATA_DECISION_PACK_HASH: packHash
+      } : {}
+    }
+  };
+}
+function resolveRickygitSessionStartScript(env = process.env) {
+  const candidates = [
+    str3(env.RICKYGIT_SESSION_START_SCRIPT),
+    path4.join(os2.homedir(), "Documents/github/rickydata_git/scripts/rickygit-session-start.sh")
+  ].filter((candidate) => Boolean(candidate));
+  return candidates.find((candidate) => fs5.existsSync(candidate));
+}
+function resolveRickygitSessionCaptureScript(env = process.env) {
+  const candidates = [
+    str3(env.RICKYGIT_SESSION_CAPTURE_SCRIPT),
+    path4.join(os2.homedir(), "Documents/github/rickydata_git/scripts/rickygit-session-capture.sh")
+  ].filter((candidate) => Boolean(candidate));
+  return candidates.find((candidate) => fs5.existsSync(candidate));
+}
+function configuredBinary(env) {
+  return str3(env.RICKYGIT_BIN) ?? "rickygit";
+}
+function preflightRickygitArm(request, env = process.env) {
+  const binary = configuredBinary(env);
+  const requiredFlags = ["--source-intent-ref"];
+  if (request.env.RICKYDATA_DECISION_PACK_ID || request.env.RICKYDATA_DECISION_PACK_HASH) {
+    requiredFlags.push("--decision-pack-id", "--decision-pack-hash");
+  }
+  const help = spawnSync(binary, ["work", "start", "--help"], {
+    encoding: "utf8",
+    env,
+    timeout: 1e3,
+    windowsHide: true
+  });
+  if (help.error || help.status !== 0) {
+    return {
+      status: "rejected",
+      binary,
+      diagnosticCode: RICKYGIT_PREFLIGHT_DIAGNOSTIC,
+      missingFlags: requiredFlags,
+      detail: help.error?.message ?? `capability probe exited ${help.status ?? "without status"}`
+    };
+  }
+  const output = `${help.stdout ?? ""}
+${help.stderr ?? ""}`;
+  const missingFlags = requiredFlags.filter((flag) => !output.includes(flag));
+  return missingFlags.length > 0 ? {
+    status: "rejected",
+    binary,
+    diagnosticCode: RICKYGIT_PREFLIGHT_DIAGNOSTIC,
+    missingFlags,
+    detail: `configured rickygit cannot carry required provenance flags: ${missingFlags.join(", ")}`
+  } : { status: "ok", binary };
+}
+function spawnRickygitArm(input, env = process.env) {
+  const request = rickygitArmRequest(input, env);
+  const script = resolveRickygitSessionStartScript(env);
+  if (!request || !script) return { status: "not_applicable" };
+  const preflight = preflightRickygitArm(request, env);
+  if (preflight.status === "rejected") return preflight;
+  try {
+    const child = spawn("bash", [
+      "-c",
+      'printf %s "$1" | bash "$2"',
+      "rickydata-git-arm",
+      JSON.stringify(request.event),
+      script
+    ], {
+      detached: true,
+      stdio: "ignore",
+      env: { ...env, ...request.env }
+    });
+    child.unref();
+    return { status: "started", binary: preflight.binary };
+  } catch (error) {
+    return {
+      status: "rejected",
+      binary: preflight.binary,
+      diagnosticCode: RICKYGIT_PREFLIGHT_DIAGNOSTIC,
+      missingFlags: [],
+      detail: error instanceof Error ? error.message : "detached adapter spawn failed"
+    };
+  }
+}
+function spawnRickygitSessionCapture(input, transcriptPath, env = process.env) {
+  const script = resolveRickygitSessionCaptureScript(env);
+  if (input.hook_event_name !== "Stop" || !str3(input.session_id) || !fs5.existsSync(transcriptPath) || !script) {
+    return { status: "not_applicable" };
+  }
+  try {
+    const child = spawn("bash", [
+      "-c",
+      'printf %s "$1" | bash "$2"',
+      "rickydata-git-capture",
+      JSON.stringify({ ...input, transcript_path: transcriptPath }),
+      script
+    ], {
+      detached: true,
+      stdio: "ignore",
+      env
+    });
+    child.unref();
+    return { status: "started" };
+  } catch (error) {
+    return { status: "rejected", detail: error instanceof Error ? error.message : "detached adapter spawn failed" };
+  }
+}
+
 // src/codex/capture-core.ts
-async function runCodexCapture(input, env = process.env, resolveRepo = ownedRepository) {
+async function runCodexCapture(input, env = process.env, resolveRepo = ownedRepository, armGit = spawnRickygitArm, closeGit = spawnRickygitSessionCapture) {
   const config = loadConfig();
   setLogLevel(config.log_level);
   const sink = resolveSink(config, env);
@@ -414,7 +555,31 @@ async function runCodexCapture(input, env = process.env, resolveRepo = ownedRepo
   const codexSessionId = typeof input.session_id === "string" && input.session_id ? input.session_id : "unknown";
   const sequence = codexPendingCount(codexSessionId);
   const event = toCodexPendingEvent(input, sequence, repo);
+  const gitEnv = {
+    ...env,
+    RICKYDATA_AGENT_ID: env.RICKYDATA_AGENT_ID || "agent:ricky-codex",
+    RICKYDATA_HARNESS: "codex",
+    RICKYDATA_SESSION_FORMAT: "codex-hooks.jsonl.v1",
+    RICKYDATA_AUTO_INIT: "true"
+  };
+  if (event.hookEventName === "UserPromptSubmit") {
+    const gitArm = armGit(input, gitEnv);
+    if (gitArm.status === "started") {
+      event.workProvenance.gitArm = { status: "started", binary: gitArm.binary };
+    } else if (gitArm.status === "rejected") {
+      event.workProvenance.gitArm = {
+        status: "rejected",
+        binary: gitArm.binary,
+        diagnosticCode: gitArm.diagnosticCode,
+        missingFlags: gitArm.missingFlags,
+        detail: gitArm.detail
+      };
+    }
+  }
   appendCodexPending(codexSessionId, event);
+  if (event.hookEventName === "Stop") {
+    closeGit(input, codexPendingFileFor(codexSessionId), gitEnv);
+  }
   return { codexSessionId, shouldFlush: event.hookEventName === "Stop" };
 }
 
@@ -428,9 +593,9 @@ async function main() {
 }
 function spawnDetachedFlush(codexSessionId) {
   try {
-    const here = path4.dirname(fileURLToPath(import.meta.url));
-    const flushScript = path4.join(here, "codex-flush.mjs");
-    const child = spawn(process.execPath, [flushScript, codexSessionId], {
+    const here = path5.dirname(fileURLToPath(import.meta.url));
+    const flushScript = path5.join(here, "codex-flush.mjs");
+    const child = spawn2(process.execPath, [flushScript, codexSessionId], {
       detached: true,
       stdio: "ignore",
       env: process.env

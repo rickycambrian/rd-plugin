@@ -4,6 +4,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   RICKYGIT_PREFLIGHT_DIAGNOSTIC, preflightRickygitArm, rickygitArmRequest, spawnRickygitArm,
+  spawnRickygitSessionCapture,
 } from '../src/lib/rickygit-arm.js';
 
 function capabilityBinary(dir: string, flags: string): string {
@@ -68,6 +69,31 @@ describe('rickygitArmRequest', () => {
       session_id: 'detached-session', cwd: '/repo', source: 'startup',
       objective: '  Exact detached objective.  ',
     });
+  });
+
+  it('hands a Codex pending transcript to the detached session adapter', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-plugin-rickygit-capture-'));
+    const output = path.join(dir, 'event.json');
+    const script = path.join(dir, 'adapter.sh');
+    const transcript = path.join(dir, 'codex.jsonl');
+    fs.writeFileSync(transcript, '{}\n');
+    fs.writeFileSync(script, '#!/usr/bin/env bash\ncat > "$RICKYGIT_PROOF_OUTPUT"\n');
+    const input = { hook_event_name: 'Stop', session_id: 'codex-session', cwd: '/repo' };
+    expect(spawnRickygitSessionCapture(input, transcript, {
+      ...process.env,
+      RICKYGIT_SESSION_CAPTURE_SCRIPT: script,
+      RICKYGIT_PROOF_OUTPUT: output,
+    })).toEqual({ status: 'started' });
+
+    let captured: unknown;
+    for (let attempt = 0; attempt < 100 && captured === undefined; attempt += 1) {
+      try {
+        captured = JSON.parse(fs.readFileSync(output, 'utf8'));
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+    expect(captured).toEqual({ ...input, transcript_path: transcript });
   });
 
   it('rejects a stale configured binary before an adapter can omit supplied pack provenance', () => {
