@@ -14,7 +14,7 @@ import { log } from './log.js';
  * re-read (or fail to find) the node.
  */
 
-const EMBED_TEXT_MAX = 8000; // server truncates at 8000 chars anyway
+const EMBED_TEXT_MAX = 30_000; // matches server MAX_EMBED_CHARS (~7.5k tokens of the embedder's 8192-token window)
 const EMBED_BATCH_MAX = 100; // server rejects larger batches
 const EMBED_TIMEOUT_MS = 60_000;
 

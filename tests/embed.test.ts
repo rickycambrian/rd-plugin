@@ -26,15 +26,15 @@ describe('collectEmbedTargets', () => {
     ]);
   });
 
-  it('dedupes by node id with last op winning, skips empty text, truncates to 8000', () => {
+  it('dedupes by node id with last op winning, skips empty text, truncates to 30000', () => {
     const targets = collectEmbedTargets([
       node('Plan', 'p1', { content: { String: 'stale' } }),
-      node('Plan', 'p1', { content: { String: 'x'.repeat(9001) } }),
+      node('Plan', 'p1', { content: { String: 'x'.repeat(30001) } }),
       node('Plan', 'p2', { content: { String: '   ' } }),
       node('ClaudeCodeSession', 's1', {}),
     ]);
     expect(targets).toHaveLength(1);
     expect(targets[0].node_id).toBe('p1');
-    expect(targets[0].text).toHaveLength(8000);
+    expect(targets[0].text).toHaveLength(30000);
   });
 });

@@ -4842,7 +4842,7 @@ async function writeContentArtifacts(config, auth, artifacts) {
 }
 
 // src/lib/embed.ts
-var EMBED_TEXT_MAX = 8e3;
+var EMBED_TEXT_MAX = 3e4;
 var EMBED_BATCH_MAX = 100;
 var EMBED_TIMEOUT_MS = 6e4;
 var EMBED_TEXT_PROPERTY = {
