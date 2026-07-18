@@ -25,6 +25,23 @@ export interface HookInput {
   [key: string]: unknown;
 }
 
+/**
+ * The claude session id for a hook event. Prefer the harness-provided
+ * session_id; when it is absent fall back to the session UUID in the transcript
+ * path basename (`<uuid>.jsonl`), and only then to the literal 'unknown'.
+ * A missing session_id would otherwise collapse every such session onto one
+ * deterministic graph-node id — the transcript basename is the same UUID Claude
+ * Code names the session, so it keeps distinct sessions distinct.
+ */
+export function resolveClaudeSessionId(input: HookInput): string {
+  if (typeof input.session_id === 'string' && input.session_id) return input.session_id;
+  if (typeof input.transcript_path === 'string' && input.transcript_path) {
+    const base = input.transcript_path.split(/[\\/]/).pop()?.replace(/\.jsonl$/i, '');
+    if (base) return base;
+  }
+  return 'unknown';
+}
+
 export async function readHookInput(): Promise<HookInput> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) {

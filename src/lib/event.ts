@@ -1,5 +1,5 @@
 import type { ClaudeCodeHookEventRecord } from 'rickydata/kfdb';
-import type { HookInput } from './hook-input.js';
+import { resolveClaudeSessionId, type HookInput } from './hook-input.js';
 import type { OwnedRepository } from '../codex/repo.js';
 import {
   buildWorkProvenance, normalizeWorkProvenance, sdkWorkContractRef,
@@ -37,7 +37,7 @@ export function toPendingEvent(input: HookInput, sequence: number, repository?: 
   return {
     sequence,
     hookEventName: str(input.hook_event_name) ?? 'Unknown',
-    claudeSessionId: str(input.session_id) ?? 'unknown',
+    claudeSessionId: resolveClaudeSessionId(input),
     transcriptPath: str(input.transcript_path),
     cwd: str(input.cwd),
     model: str(input.model),

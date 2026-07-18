@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readHookInput } from './lib/hook-input.js';
+import { readHookInput, resolveClaudeSessionId } from './lib/hook-input.js';
 import { toPendingEvent } from './lib/event.js';
 import { appendPending, pendingCount } from './lib/pending.js';
 import { loadConfig, resolveSink, shouldTrack } from './lib/config.js';
@@ -45,7 +45,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const sessionId = typeof input.session_id === 'string' && input.session_id ? input.session_id : 'unknown';
+  const sessionId = resolveClaudeSessionId(input);
   const sequence = pendingCount(sessionId);
   const repo = await ownedRepository(typeof input.cwd === 'string' ? input.cwd : undefined, null);
   const repository = repo ? {

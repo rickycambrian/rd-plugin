@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readHookInput } from './lib/hook-input.js';
+import { readHookInput, resolveClaudeSessionId } from './lib/hook-input.js';
 import { loadConfig, resolveSink, shouldTrack } from './lib/config.js';
 import { setLogLevel, log } from './lib/log.js';
 import { gatherContextPack } from './lib/context-pack.js';
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
   await writeAll(process.stdout, JSON.stringify({
     hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: pack.text },
   }));
-  const sessionId = typeof input.session_id === 'string' && input.session_id ? input.session_id : 'unknown';
+  const sessionId = resolveClaudeSessionId(input);
   const repository = repo ? {
     owner: repo.owner, repository: repo.repository, fullName: `${repo.owner}/${repo.repository}`,
     remoteUrl: repo.remoteUrl, branch: repo.branch, commitSha: repo.commitSha, treeHash: repo.treeHash,

@@ -4,6 +4,14 @@
 import path4 from "node:path";
 
 // src/lib/hook-input.ts
+function resolveClaudeSessionId(input) {
+  if (typeof input.session_id === "string" && input.session_id) return input.session_id;
+  if (typeof input.transcript_path === "string" && input.transcript_path) {
+    const base = input.transcript_path.split(/[\\/]/).pop()?.replace(/\.jsonl$/i, "");
+    if (base) return base;
+  }
+  return "unknown";
+}
 async function readHookInput() {
   const chunks = [];
   for await (const chunk of process.stdin) {
@@ -3385,7 +3393,7 @@ function toPendingEvent(input, sequence, repository) {
   return {
     sequence,
     hookEventName: str3(input.hook_event_name) ?? "Unknown",
-    claudeSessionId: str3(input.session_id) ?? "unknown",
+    claudeSessionId: resolveClaudeSessionId(input),
     transcriptPath: str3(input.transcript_path),
     cwd: str3(input.cwd),
     model: str3(input.model),
@@ -3473,7 +3481,7 @@ async function main() {
   await writeAll(process.stdout, JSON.stringify({
     hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: pack.text }
   }));
-  const sessionId = typeof input.session_id === "string" && input.session_id ? input.session_id : "unknown";
+  const sessionId = resolveClaudeSessionId(input);
   const repository = repo ? {
     owner: repo.owner,
     repository: repo.repository,

@@ -6,6 +6,14 @@ import path4 from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/lib/hook-input.ts
+function resolveClaudeSessionId(input) {
+  if (typeof input.session_id === "string" && input.session_id) return input.session_id;
+  if (typeof input.transcript_path === "string" && input.transcript_path) {
+    const base = input.transcript_path.split(/[\\/]/).pop()?.replace(/\.jsonl$/i, "");
+    if (base) return base;
+  }
+  return "unknown";
+}
 async function readHookInput() {
   const chunks = [];
   for await (const chunk of process.stdin) {
@@ -157,7 +165,7 @@ function toPendingEvent(input, sequence, repository) {
   return {
     sequence,
     hookEventName: str2(input.hook_event_name) ?? "Unknown",
-    claudeSessionId: str2(input.session_id) ?? "unknown",
+    claudeSessionId: resolveClaudeSessionId(input),
     transcriptPath: str2(input.transcript_path),
     cwd: str2(input.cwd),
     model: str2(input.model),
@@ -498,7 +506,7 @@ async function main() {
   if (sink === "off" || !shouldTrack(config, input.cwd)) {
     return;
   }
-  const sessionId = typeof input.session_id === "string" && input.session_id ? input.session_id : "unknown";
+  const sessionId = resolveClaudeSessionId(input);
   const sequence = pendingCount(sessionId);
   const repo = await ownedRepository(typeof input.cwd === "string" ? input.cwd : void 0, null);
   const repository = repo ? {
