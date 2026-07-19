@@ -23,6 +23,7 @@ const outDir = path.resolve(process.argv[2] ?? path.join(root, 'dist'));
 const ENTRYPOINTS = [
   'backfill.ts',
   'capture.ts',
+  'ci-wait-guard.ts',
   'codex-capture.ts',
   'codex-flush.ts',
   'drain-queue.ts',
