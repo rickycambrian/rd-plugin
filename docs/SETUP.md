@@ -147,6 +147,7 @@ Everything rd-plugin writes lives under `~/.rickydata/`:
 - `config.json` — your configuration (shared with other rickydata tools).
 - `derive-session.json` — cached sign-to-derive session.
 - `state/rd-plugin/state.json` — flush fingerprints and backfill watermark.
+- `state/rd-plugin/lifecycle/` — compact per-session current status for local desktop consumers.
 - `state/rd-plugin/codex-pending/` — per-session Codex event logs awaiting flush.
 - `queue/rd-plugin/` — offline retry queue.
 - `logs/rd-plugin.log` — plugin log.

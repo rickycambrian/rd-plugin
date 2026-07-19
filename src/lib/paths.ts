@@ -24,6 +24,9 @@ export const STATE_FILE = path.join(STATE_DIR, 'state.json');
 /** Per-session fast-append pending event logs. */
 export const PENDING_DIR = path.join(STATE_DIR, 'pending');
 
+/** Compact current lifecycle state for local real-time consumers. */
+export const LIFECYCLE_DIR = path.join(STATE_DIR, 'lifecycle');
+
 /** Offline retry queue. */
 export const QUEUE_DIR = path.join(DATA_DIR, 'queue', 'rd-plugin');
 

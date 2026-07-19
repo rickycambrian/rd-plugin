@@ -1,6 +1,6 @@
 import type { HookInput } from '../lib/hook-input.js';
 import { loadConfig, resolveSink, shouldTrack } from '../lib/config.js';
-import { setLogLevel } from '../lib/log.js';
+import { log, setLogLevel } from '../lib/log.js';
 import { loadCodexRepoOwners } from './config.js';
 import { ownedRepository, type OwnedRepository } from './repo.js';
 import { toCodexPendingEvent } from './event.js';
@@ -9,6 +9,7 @@ import { codexPendingFileFor } from './paths.js';
 import {
   spawnRickygitArm, spawnRickygitSessionCapture, type RickygitArmResult, type RickygitSessionCaptureResult,
 } from '../lib/rickygit-arm.js';
+import { lifecycleSnapshotForEvent, writeLifecycleSnapshot } from '../lib/lifecycle.js';
 
 export interface CodexCaptureResult {
   codexSessionId: string;
@@ -69,6 +70,12 @@ export async function runCodexCapture(
     }
   }
   appendCodexPending(codexSessionId, event);
+  try {
+    const snapshot = lifecycleSnapshotForEvent('codex', event);
+    if (snapshot) writeLifecycleSnapshot(snapshot);
+  } catch (err) {
+    log('warn', 'codex lifecycle snapshot failed', { error: (err as Error).message });
+  }
   if (event.hookEventName === 'Stop') {
     closeGit(input, codexPendingFileFor(codexSessionId), gitEnv);
   }

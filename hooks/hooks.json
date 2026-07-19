@@ -32,6 +32,16 @@
             "timeout": 3
           }
         ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/capture.mjs",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [

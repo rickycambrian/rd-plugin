@@ -2,7 +2,7 @@
 
 // src/codex-capture.ts
 import { spawn as spawn2 } from "node:child_process";
-import path5 from "node:path";
+import path6 from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/lib/hook-input.ts
@@ -34,6 +34,7 @@ var DERIVE_SESSION_FILE = path.join(DATA_DIR, "derive-session.json");
 var STATE_DIR = path.join(DATA_DIR, "state", "rd-plugin");
 var STATE_FILE = path.join(STATE_DIR, "state.json");
 var PENDING_DIR = path.join(STATE_DIR, "pending");
+var LIFECYCLE_DIR = path.join(STATE_DIR, "lifecycle");
 var QUEUE_DIR = path.join(DATA_DIR, "queue", "rd-plugin");
 var QUEUE_DEAD_DIR = path.join(DATA_DIR, "queue-failed", "rd-plugin");
 var LOG_FILE = path.join(DATA_DIR, "logs", "rd-plugin.log");
@@ -542,6 +543,70 @@ function spawnRickygitSessionCapture(input, transcriptPath, env = process.env) {
   }
 }
 
+// src/lib/lifecycle.ts
+import fs6 from "node:fs";
+import path5 from "node:path";
+function lifecycleSnapshotForEvent(engine, event) {
+  const sessionId = engine === "claude" ? event.claudeSessionId : event.codexSessionId;
+  if (!sessionId || sessionId === "unknown") return null;
+  let status;
+  let detail;
+  switch (event.hookEventName) {
+    case "UserPromptSubmit":
+    case "PostToolUse":
+      status = "working";
+      break;
+    case "PreToolUse":
+      status = event.toolName === "AskUserQuestion" ? "input required" : "working";
+      detail = event.toolName !== "AskUserQuestion" && event.toolName ? `running ${event.toolName}` : void 0;
+      break;
+    case "PermissionRequest":
+    case "Notification":
+      status = "input required";
+      break;
+    case "Stop":
+    case "SessionEnd":
+      status = "completed";
+      break;
+    default:
+      return null;
+  }
+  return {
+    version: 1,
+    engine,
+    sessionId,
+    hookEventName: event.hookEventName,
+    status,
+    ...detail ? { detail } : {},
+    updatedAt: event.receivedAt,
+    sequence: event.sequence
+  };
+}
+function writeLifecycleSnapshot(snapshot, root = LIFECYCLE_DIR) {
+  const dir = path5.join(root, snapshot.engine);
+  const target = path5.join(dir, `${safeName(snapshot.sessionId)}.json`);
+  fs6.mkdirSync(dir, { recursive: true });
+  try {
+    const current = JSON.parse(fs6.readFileSync(target, "utf8"));
+    if ((current.updatedAt ?? 0) > snapshot.updatedAt || current.updatedAt === snapshot.updatedAt && (current.sequence ?? -1) > snapshot.sequence) {
+      return target;
+    }
+  } catch {
+  }
+  const temporary = `${target}.${process.pid}.${snapshot.updatedAt}.${snapshot.sequence}.tmp`;
+  try {
+    fs6.writeFileSync(temporary, `${JSON.stringify(snapshot)}
+`, { mode: 384 });
+    fs6.renameSync(temporary, target);
+  } finally {
+    try {
+      fs6.rmSync(temporary, { force: true });
+    } catch {
+    }
+  }
+  return target;
+}
+
 // src/codex/capture-core.ts
 async function runCodexCapture(input, env = process.env, resolveRepo = ownedRepository, armGit = spawnRickygitArm, closeGit = spawnRickygitSessionCapture) {
   const config = loadConfig();
@@ -577,6 +642,12 @@ async function runCodexCapture(input, env = process.env, resolveRepo = ownedRepo
     }
   }
   appendCodexPending(codexSessionId, event);
+  try {
+    const snapshot = lifecycleSnapshotForEvent("codex", event);
+    if (snapshot) writeLifecycleSnapshot(snapshot);
+  } catch (err) {
+    log("warn", "codex lifecycle snapshot failed", { error: err.message });
+  }
   if (event.hookEventName === "Stop") {
     closeGit(input, codexPendingFileFor(codexSessionId), gitEnv);
   }
@@ -593,8 +664,8 @@ async function main() {
 }
 function spawnDetachedFlush(codexSessionId) {
   try {
-    const here = path5.dirname(fileURLToPath(import.meta.url));
-    const flushScript = path5.join(here, "codex-flush.mjs");
+    const here = path6.dirname(fileURLToPath(import.meta.url));
+    const flushScript = path6.join(here, "codex-flush.mjs");
     const child = spawn2(process.execPath, [flushScript, codexSessionId], {
       detached: true,
       stdio: "ignore",

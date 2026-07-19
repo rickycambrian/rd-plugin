@@ -39,6 +39,7 @@ var DERIVE_SESSION_FILE = path.join(DATA_DIR, "derive-session.json");
 var STATE_DIR = path.join(DATA_DIR, "state", "rd-plugin");
 var STATE_FILE = path.join(STATE_DIR, "state.json");
 var PENDING_DIR = path.join(STATE_DIR, "pending");
+var LIFECYCLE_DIR = path.join(STATE_DIR, "lifecycle");
 var QUEUE_DIR = path.join(DATA_DIR, "queue", "rd-plugin");
 var QUEUE_DEAD_DIR = path.join(DATA_DIR, "queue-failed", "rd-plugin");
 var LOG_FILE = path.join(DATA_DIR, "logs", "rd-plugin.log");

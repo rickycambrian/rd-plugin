@@ -2,7 +2,7 @@
 
 // src/capture.ts
 import { spawn as spawn2 } from "node:child_process";
-import path4 from "node:path";
+import path5 from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/lib/hook-input.ts
@@ -202,6 +202,7 @@ var DERIVE_SESSION_FILE = path.join(DATA_DIR, "derive-session.json");
 var STATE_DIR = path.join(DATA_DIR, "state", "rd-plugin");
 var STATE_FILE = path.join(STATE_DIR, "state.json");
 var PENDING_DIR = path.join(STATE_DIR, "pending");
+var LIFECYCLE_DIR = path.join(STATE_DIR, "lifecycle");
 var QUEUE_DIR = path.join(DATA_DIR, "queue", "rd-plugin");
 var QUEUE_DEAD_DIR = path.join(DATA_DIR, "queue-failed", "rd-plugin");
 var LOG_FILE = path.join(DATA_DIR, "logs", "rd-plugin.log");
@@ -481,6 +482,70 @@ function spawnRickygitArm(input, env = process.env) {
   }
 }
 
+// src/lib/lifecycle.ts
+import fs5 from "node:fs";
+import path4 from "node:path";
+function lifecycleSnapshotForEvent(engine, event) {
+  const sessionId = engine === "claude" ? event.claudeSessionId : event.codexSessionId;
+  if (!sessionId || sessionId === "unknown") return null;
+  let status;
+  let detail;
+  switch (event.hookEventName) {
+    case "UserPromptSubmit":
+    case "PostToolUse":
+      status = "working";
+      break;
+    case "PreToolUse":
+      status = event.toolName === "AskUserQuestion" ? "input required" : "working";
+      detail = event.toolName !== "AskUserQuestion" && event.toolName ? `running ${event.toolName}` : void 0;
+      break;
+    case "PermissionRequest":
+    case "Notification":
+      status = "input required";
+      break;
+    case "Stop":
+    case "SessionEnd":
+      status = "completed";
+      break;
+    default:
+      return null;
+  }
+  return {
+    version: 1,
+    engine,
+    sessionId,
+    hookEventName: event.hookEventName,
+    status,
+    ...detail ? { detail } : {},
+    updatedAt: event.receivedAt,
+    sequence: event.sequence
+  };
+}
+function writeLifecycleSnapshot(snapshot, root = LIFECYCLE_DIR) {
+  const dir = path4.join(root, snapshot.engine);
+  const target = path4.join(dir, `${safeName(snapshot.sessionId)}.json`);
+  fs5.mkdirSync(dir, { recursive: true });
+  try {
+    const current = JSON.parse(fs5.readFileSync(target, "utf8"));
+    if ((current.updatedAt ?? 0) > snapshot.updatedAt || current.updatedAt === snapshot.updatedAt && (current.sequence ?? -1) > snapshot.sequence) {
+      return target;
+    }
+  } catch {
+  }
+  const temporary = `${target}.${process.pid}.${snapshot.updatedAt}.${snapshot.sequence}.tmp`;
+  try {
+    fs5.writeFileSync(temporary, `${JSON.stringify(snapshot)}
+`, { mode: 384 });
+    fs5.renameSync(temporary, target);
+  } finally {
+    try {
+      fs5.rmSync(temporary, { force: true });
+    } catch {
+    }
+  }
+  return target;
+}
+
 // src/capture.ts
 var USAGE = `usage: node capture.mjs [--spawn-flush] [--final]
 
@@ -537,14 +602,20 @@ async function main() {
     log("error", "rickygit provenance preflight rejected", gitArm);
   }
   appendPending(sessionId, event);
+  try {
+    const snapshot = lifecycleSnapshotForEvent("claude", event);
+    if (snapshot) writeLifecycleSnapshot(snapshot);
+  } catch (err) {
+    log("warn", "lifecycle snapshot failed", { error: err.message });
+  }
   if (spawnFlush) {
     spawnDetachedFlush(sessionId, final);
   }
 }
 function spawnDetachedFlush(sessionId, final) {
   try {
-    const here = path4.dirname(fileURLToPath(import.meta.url));
-    const flushScript = path4.join(here, "flush.mjs");
+    const here = path5.dirname(fileURLToPath(import.meta.url));
+    const flushScript = path5.join(here, "flush.mjs");
     const flushArgs = [flushScript, sessionId];
     if (final) flushArgs.push("--final");
     const child = spawn2(process.execPath, flushArgs, {

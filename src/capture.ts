@@ -9,6 +9,7 @@ import { setLogLevel, log } from './lib/log.js';
 import { wantsHelp } from './lib/cli-help.js';
 import { ownedRepository } from './codex/repo.js';
 import { spawnRickygitArm } from './lib/rickygit-arm.js';
+import { lifecycleSnapshotForEvent, writeLifecycleSnapshot } from './lib/lifecycle.js';
 
 const USAGE = `usage: node capture.mjs [--spawn-flush] [--final]
 
@@ -76,6 +77,12 @@ async function main(): Promise<void> {
     log('error', 'rickygit provenance preflight rejected', gitArm);
   }
   appendPending(sessionId, event);
+  try {
+    const snapshot = lifecycleSnapshotForEvent('claude', event);
+    if (snapshot) writeLifecycleSnapshot(snapshot);
+  } catch (err) {
+    log('warn', 'lifecycle snapshot failed', { error: (err as Error).message });
+  }
 
   if (spawnFlush) {
     spawnDetachedFlush(sessionId, final);
