@@ -1,0 +1,46 @@
+{
+  "gate": "rd-plugin collection-to-context audit (no code gap found)",
+  "wallet": "0xb3e6fa9620933ba9a6037f4ff890ec5fad0ba113",
+  "kfdb": "http://34.60.37.158",
+  "pluginCommitAudited": "b52767c151c1c2d38f16d21af5f2f645e2d3ab00",
+  "all_pass": true,
+  "conclusion": "Every audited fact reaches durable wallet-scoped artifacts through the existing pipeline; no reproduced loss, mismatch, or missing correlation field. Per the change rule, no code change was manufactured.",
+  "steps": {
+    "capture": {
+      "pass": true,
+      "claudeSessionId": "7e224c75-3e2c-4984-80ac-6699e6c9ce89",
+      "evidence": "pending log captured full 3107-char prompt, repository snapshot (branch, commitSha, treeHash, dirtyStateHash), workProvenance envelope with gitArm status, per-event timestamps and sequence"
+    },
+    "flush_and_readback": {
+      "pass": true,
+      "sessionNodeId": "029023b3-8679-57c6-9bd4-292dcb78210c",
+      "turn1NodeId": "via deterministic ClaudeCodeTurn recipe",
+      "evidence": "normal flush worker (2239 ops, 421 artifacts); private-scope read-back shows initial_prompt, branch=main, session_kind=interactive (entrypoint), files_changed, turn model=claude-fable-5, started_at/completed_at, event_count; one timed-out batch queued and drained to zero by a concurrent flush"
+    },
+    "prompt_provenance": {
+      "pass": true,
+      "artifactId": "a0e94def-8adf-5fca-bfad-3b36b5069f58",
+      "contentHash": "sha256:15c0f480af33353657315afb056c6dcad544a975137856b91232027a60280f4c",
+      "evidence": "initial-prompt ContentArtifact node present; immutable private-kv content read back (3107 bytes) and sha256 re-verified against ref"
+    },
+    "retry_idempotency": {
+      "pass": true,
+      "evidence": "deterministic uuidv5 node/edge ids + merge mode; state.json fingerprint skips unchanged re-flush; queue content-hash dedupe + dedupeKey supersede; artifacts if_absent + 409-as-success; merge-semantics probes (3-op and 899-op single batch, same node id) applied all property sets with later-op-wins"
+    },
+    "home_consumption": {
+      "pass": true,
+      "evidence": "RickydataChatSession session_bridge.v2 node exists for the same claude session (prompt_anatomy_prompts=1, prompt_capture_status=complete, git_branch, repo attribution, commit-correlation arrays); SAME_SESSION in-degree 2 (ClaudeCodeSession + RickydataChatSession); issue-linker join columns (session_id, claude_session_id, branch, issue_refs, issue_refs_slug) verified present on live nodes; no manual export"
+    },
+    "local_proof": {
+      "pass": true,
+      "nodePresent": true,
+      "schemaVersion": 3,
+      "timestamp": "2026-07-19T15:48:17.320Z"
+    }
+  },
+  "watch_items": [
+    "KFDB read-path staleness: during a multi-batch flush window a ClaudeCodeSession property (branch) ACKed by /api/v1/write was not visible to batchGetEntities minutes later, then appeared after a subsequent single-op write; server merge semantics verified correct by direct probes, so this is a KFDB read/visibility concern, not a plugin producer loss",
+    "rd-plugin has no voice/browser turn source by design; those turns are produced by Home's session bridge (RickydataChatSession) and joined via the SAME_SESSION star"
+  ],
+  "timestamp": "2026-07-19T15:52:00.000Z"
+}
