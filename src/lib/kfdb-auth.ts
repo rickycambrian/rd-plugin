@@ -36,7 +36,12 @@ export function hasKfdbCredential(auth: KfdbAuth): boolean {
  * never cache or reuse the returned object across requests.
  */
 export function kfdbAuthHeaders(auth: KfdbAuth, method: string, url: string): Record<string, string> {
-  const headers: Record<string, string> = auth.deriveHeaders ? { ...auth.deriveHeaders } : {};
+  // KFDB requires client attribution (X-Client-ID) on rate-limited surfaces —
+  // /api/v1/entities/embed/batch rejects unattributed calls with 400 (#1).
+  const headers: Record<string, string> = {
+    'X-Client-ID': 'rd-plugin',
+    ...(auth.deriveHeaders ? { ...auth.deriveHeaders } : {}),
+  };
   if (auth.apiKey) {
     headers.Authorization = `Bearer ${auth.apiKey}`;
   } else if (auth.privateKey) {

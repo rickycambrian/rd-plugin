@@ -134,9 +134,9 @@ describe('ERC-8128 request signing', () => {
 describe('kfdbAuthHeaders mode selection', () => {
   const derive = { 'X-Wallet-Address': '0xabc', 'X-Derive-Session-Id': 's', 'X-Derive-Key': 'k' } as const;
 
-  it('api_key present → Bearer + derive, byte-identical to legacy behavior', () => {
+  it('api_key present → Bearer + derive + client attribution (X-Client-ID)', () => {
     const headers = kfdbAuthHeaders({ apiKey: 'kf_x', privateKey: TEST_KEY, deriveHeaders: derive }, 'POST', 'http://h/api/v1/write');
-    expect(headers).toEqual({ ...derive, Authorization: 'Bearer kf_x' });
+    expect(headers).toEqual({ ...derive, Authorization: 'Bearer kf_x', 'X-Client-ID': 'rd-plugin' });
   });
 
   it('private_key only → ERC-8128 headers + derive, no Authorization', () => {

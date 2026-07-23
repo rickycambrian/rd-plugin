@@ -2941,7 +2941,10 @@ function signErc8128Request(input) {
 
 // src/lib/kfdb-auth.ts
 function kfdbAuthHeaders(auth, method, url) {
-  const headers2 = auth.deriveHeaders ? { ...auth.deriveHeaders } : {};
+  const headers2 = {
+    "X-Client-ID": "rd-plugin",
+    ...auth.deriveHeaders ? { ...auth.deriveHeaders } : {}
+  };
   if (auth.apiKey) {
     headers2.Authorization = `Bearer ${auth.apiKey}`;
   } else if (auth.privateKey) {
@@ -3007,7 +3010,11 @@ async function fetchHomePack(input) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${input.homeUrl.replace(/\/$/, "")}/api/context-pack?${params}`, {
-      headers: { Accept: "application/json", Authorization: `Bearer ${input.homeToken}` },
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${input.homeToken}`,
+        ...input.auth.deriveHeaders ?? {}
+      },
       signal: controller.signal
     });
     if (!res.ok) return null;

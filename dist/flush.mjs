@@ -4375,7 +4375,10 @@ function kfdbAuthFromConfig(config, deriveHeaders) {
   };
 }
 function kfdbAuthHeaders(auth, method, url) {
-  const headers = auth.deriveHeaders ? { ...auth.deriveHeaders } : {};
+  const headers = {
+    "X-Client-ID": "rd-plugin",
+    ...auth.deriveHeaders ? { ...auth.deriveHeaders } : {}
+  };
   if (auth.apiKey) {
     headers.Authorization = `Bearer ${auth.apiKey}`;
   } else if (auth.privateKey) {

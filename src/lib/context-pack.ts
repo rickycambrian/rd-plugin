@@ -135,8 +135,17 @@ async function fetchHomePack(input: ContextPackInput): Promise<HomeContextPack |
   const timeoutMs = Math.max(500, Math.min(input.timeoutMs ?? 8_500, 7_500));
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // Home resolves a per-request tenant KFDB client from the wallet's derive
+    // session (x-derive-session-id / x-derive-key). Without these headers any
+    // wallet that is not the server's own local wallet gets 428
+    // TenantDeriveRequiredError — the user signs to decrypt their own data;
+    // the server never holds their key (#2).
     const res = await fetch(`${input.homeUrl.replace(/\/$/, '')}/api/context-pack?${params}`, {
-      headers: { Accept: 'application/json', Authorization: `Bearer ${input.homeToken}` },
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${input.homeToken}`,
+        ...(input.auth.deriveHeaders ?? {}),
+      },
       signal: controller.signal,
     });
     if (!res.ok) return null;
